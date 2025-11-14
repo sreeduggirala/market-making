@@ -5,10 +5,19 @@ edition = "2024"
 publish = false
 
 [dependencies]
-anyhow = "1.0.100"
-async-trait = "0.1.89"
-reqwest = "0.12.23"
-rust_decimal = "1.38.0"
-serde = "1.0.228"
-serde_json = "1.0.145"
-tokio = "1.47.1"
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+reqwest = { workspace = true }
+rust_decimal = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tokio-tungstenite = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+chrono = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+base64 = { workspace = true }
+serde_urlencoded = { workspace = true }
+futures-util = { workspace = true }
