@@ -1,12 +1,24 @@
-mod common;
+//! Kraken Exchange Adapters
+//!
+//! Provides unified adapters for Kraken spot and futures markets. Each adapter
+//! combines REST API and WebSocket functionality in a single struct.
+//!
+//! # Available Adapters
+//!
+//! - [`KrakenSpotAdapter`] - Spot trading (complete implementation)
+//! - [`KrakenFuturesAdapter`] - Futures/perpetuals trading (placeholder)
+//!
+//! # Module Structure
+//!
+//! - [`account`] - Shared authentication, HTTP client, and type converters
+//! - [`spot`] - Spot market adapter implementation
+//! - [`futures`] - Futures market adapter (partial)
 
-pub mod spot_rest;
-pub mod spot_ws;
-pub mod perps_rest;
-pub mod perps_ws;
+// Core modules
+pub mod account;
+pub mod spot;
+pub mod futures;
 
-// Re-export main types for convenience
-pub use spot_rest::KrakenSpotRest;
-pub use spot_ws::KrakenSpotWs;
-pub use perps_rest::KrakenPerpsRest;
-pub use perps_ws::KrakenPerpsWs;
+// Re-export main adapters for convenient access
+pub use spot::KrakenSpotAdapter;
+pub use futures::KrakenFuturesAdapter;

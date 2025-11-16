@@ -1,11 +1,53 @@
 [workspace]
+resolver = "3"
 members = [
     "crates/models",
     "crates/adapters",
     "crates/oms",
-    "crates/hedge", 
+    "crates/hedge",
     "crates/risk",
 ]
 
 [workspace.dependencies]
+# Core async runtime
+tokio = { version = "1.47", features = ["full"] }
+async-trait = "0.1.89"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Decimal precision (critical for trading)
+rust_decimal = "1.38"
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+
+# WebSocket
+tokio-tungstenite = { version = "0.21", features = ["rustls-tls-native-roots"] }
+
+# Logging & tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Time utilities
+chrono = "0.4"
+
+# URL handling
+url = "2.5"
+
+# Cryptography for API signatures
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.21"
+
+# URL encoding
+serde_urlencoded = "0.7"
+
+# Futures utilities
+futures-util = "0.3"
 
