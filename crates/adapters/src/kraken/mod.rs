@@ -6,19 +6,19 @@
 //! # Available Adapters
 //!
 //! - [`KrakenSpotAdapter`] - Spot trading (complete implementation)
-//! - [`KrakenFuturesAdapter`] - Futures/perpetuals trading (placeholder)
+//! - [`KrakenPerpsAdapter`] - Futures/perpetuals trading (placeholder)
 //!
 //! # Module Structure
 //!
 //! - [`account`] - Shared authentication, HTTP client, and type converters
 //! - [`spot`] - Spot market adapter implementation
-//! - [`futures`] - Futures market adapter (partial)
+//! - [`perps`] - Perpetuals/futures market adapter (partial)
 
 // Core modules
 pub mod account;
 pub mod spot;
-pub mod futures;
+pub mod perps;
 
 // Re-export main adapters for convenient access
 pub use spot::KrakenSpotAdapter;
-pub use futures::KrakenFuturesAdapter;
+pub use perps::KrakenPerpsAdapter;

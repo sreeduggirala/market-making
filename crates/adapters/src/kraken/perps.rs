@@ -73,7 +73,7 @@ use tokio::sync::{Mutex, RwLock};
 /// # Example (Future Usage)
 ///
 /// ```ignore
-/// let adapter = KrakenFuturesAdapter::new(api_key, api_secret);
+/// let adapter = KrakenPerpsAdapter::new(api_key, api_secret);
 ///
 /// // Set leverage for a symbol
 /// adapter.set_leverage("PF_XBTUSD", Decimal::from(10)).await?;
@@ -84,7 +84,7 @@ use tokio::sync::{Mutex, RwLock};
 /// // Subscribe to position updates
 /// let mut user_events = adapter.subscribe_user().await?;
 /// ```
-pub struct KrakenFuturesAdapter {
+pub struct KrakenPerpsAdapter {
     /// HTTP client for Futures REST API requests
     client: KrakenRestClient,
 
@@ -98,7 +98,7 @@ pub struct KrakenFuturesAdapter {
     _connection_status: Arc<RwLock<ConnectionStatus>>,
 }
 
-impl KrakenFuturesAdapter {
+impl KrakenPerpsAdapter {
     /// Creates a new Kraken Futures adapter instance
     ///
     /// Initializes the REST client with futures-specific base URL. WebSocket
@@ -112,7 +112,7 @@ impl KrakenFuturesAdapter {
     /// # Example
     ///
     /// ```ignore
-    /// let adapter = KrakenFuturesAdapter::new(
+    /// let adapter = KrakenPerpsAdapter::new(
     ///     "YOUR_API_KEY".to_string(),
     ///     "YOUR_API_SECRET".to_string()
     /// );
@@ -143,11 +143,11 @@ impl KrakenFuturesAdapter {
     }
 }
 
-// TODO: Implement PerpRest trait for KrakenFuturesAdapter
+// TODO: Implement PerpRest trait for KrakenPerpsAdapter
 // The implementation should follow the pattern in spot.rs but use the
 // Kraken Futures API endpoints documented at:
 // https://docs.kraken.com/api/docs/futures-api
 
-// TODO: Implement PerpWs trait for KrakenFuturesAdapter
+// TODO: Implement PerpWs trait for KrakenPerpsAdapter
 // The implementation should handle Kraken Futures WebSocket feeds:
 // https://docs.kraken.com/api/docs/futures-api/websocket
