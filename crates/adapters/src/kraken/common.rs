@@ -165,6 +165,7 @@ impl<T> KrakenResponse<T> {
 }
 
 /// WebSocket message types
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "method")]
 pub enum WsMessage {
@@ -192,6 +193,7 @@ pub enum WsMessage {
     },
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SubscribeParams {
     pub channel: String,
@@ -201,6 +203,7 @@ pub struct SubscribeParams {
     pub token: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AddOrderParams {
     pub order_type: String,
@@ -222,6 +225,7 @@ pub struct AddOrderParams {
     pub token: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CancelOrderParams {
     pub order_id: Vec<String>,
@@ -278,6 +282,7 @@ pub mod converters {
         }
     }
 
+    #[allow(dead_code)]
     pub fn from_kraken_tif(tif: &str) -> TimeInForce {
         match tif {
             "GTC" => TimeInForce::Gtc,

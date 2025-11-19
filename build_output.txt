@@ -1,0 +1,4 @@
+    Updating crates.io index
+     Locking 1 package to latest compatible version
+      Adding hex v0.4.3
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.00s

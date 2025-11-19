@@ -39,11 +39,13 @@ struct SendStatus {
     order_id: Option<String>,
     status: String,
     #[serde(rename = "orderEvents")]
+    #[allow(dead_code)]
     order_events: Option<Vec<OrderEvent>>,
 }
 
 #[derive(Debug, Deserialize)]
 struct OrderEvent {
+    #[allow(dead_code)]
     order: Option<FuturesOrder>,
 }
 
@@ -64,8 +66,10 @@ struct FuturesOrder {
     filled: f64,
     #[serde(rename = "orderStatus")]
     order_status: String,
+    #[allow(dead_code)]
     timestamp: String,
     #[serde(rename = "lastUpdateTimestamp")]
+    #[allow(dead_code)]
     last_update_timestamp: Option<String>,
 }
 
@@ -78,6 +82,7 @@ struct FuturesCancelResult {
 #[derive(Debug, Deserialize)]
 struct CancelStatus {
     status: String,
+    #[allow(dead_code)]
     order_id: Option<String>,
 }
 
@@ -104,6 +109,7 @@ struct FuturesPosition {
 struct FuturesAccountInfo {
     balances: HashMap<String, f64>,
     #[serde(rename = "availableMargin")]
+    #[allow(dead_code)]
     available_margin: f64,
 }
 
@@ -117,12 +123,14 @@ struct FuturesInstrument {
     #[serde(rename = "tickSize")]
     tick_size: f64,
     #[serde(rename = "contractSize")]
+    #[allow(dead_code)]
     contract_size: f64,
     #[serde(rename = "minOrderSize")]
     min_order_size: Option<f64>,
     #[serde(rename = "maxOrderSize")]
     max_order_size: Option<f64>,
     #[serde(rename = "maxPositionSize")]
+    #[allow(dead_code)]
     max_position_size: Option<f64>,
     #[serde(rename = "tradeable")]
     tradeable: bool,
@@ -139,8 +147,10 @@ struct FuturesTicker {
     ask: f64,
     volume: f64,
     #[serde(rename = "volumeQuote")]
+    #[allow(dead_code)]
     volume_quote: f64,
     #[serde(rename = "openInterest")]
+    #[allow(dead_code)]
     open_interest: Option<f64>,
     #[serde(rename = "markPrice")]
     mark_price: Option<f64>,
@@ -155,6 +165,7 @@ struct FuturesFundingRate {
     symbol: String,
     rate: f64,
     #[serde(rename = "timestamp")]
+    #[allow(dead_code)]
     timestamp: String,
 }
 
@@ -662,7 +673,7 @@ impl PerpRest for KrakenPerpsRest {
     }
 
     async fn get_mark_price(&self, symbol: &str) -> Result<(Price, UnixMillis)> {
-        let ticker = self.get_ticker(symbol).await?;
+        let _ticker = self.get_ticker(symbol).await?;
 
         // Get mark price from ticker (already includes it)
         let mut params = HashMap::new();
@@ -698,7 +709,7 @@ impl PerpRest for KrakenPerpsRest {
         interval: KlineInterval,
         start_ms: Option<UnixMillis>,
         end_ms: Option<UnixMillis>,
-        limit: Option<usize>,
+        _limit: Option<usize>,
     ) -> Result<Vec<Kline>> {
         let resolution = match interval {
             KlineInterval::M1 => "1m",
@@ -727,10 +738,10 @@ impl PerpRest for KrakenPerpsRest {
             .get_public("/charts", Some(params))
             .await?;
 
-        let result = response.into_result()?;
+        let _result = response.into_result()?;
 
         // Parse the candles from response
-        let mut klines = Vec::new();
+        let klines = Vec::new();
 
         // This is a placeholder - actual parsing would depend on Kraken's response format
         // Would parse OHLCV data similar to spot implementation

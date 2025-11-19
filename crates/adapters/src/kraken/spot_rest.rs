@@ -74,7 +74,9 @@ struct KrakenAssetPairsResult {
 
 #[derive(Debug, Deserialize)]
 struct KrakenAssetPairInfo {
+    #[allow(dead_code)]
     altname: String,
+    #[allow(dead_code)]
     wsname: String,
     base: String,
     quote: String,
@@ -97,7 +99,9 @@ struct KrakenTickerData {
     b: Vec<String>, // bid [price, whole lot volume, lot volume]
     c: Vec<String>, // last trade [price, lot volume]
     v: Vec<String>, // volume [today, last 24 hours]
+    #[allow(dead_code)]
     p: Vec<String>, // volume weighted average price [today, last 24 hours]
+    #[allow(dead_code)]
     t: Vec<u64>,    // number of trades [today, last 24 hours]
     l: Vec<String>, // low [today, last 24 hours]
     h: Vec<String>, // high [today, last 24 hours]

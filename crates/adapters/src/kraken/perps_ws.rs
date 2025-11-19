@@ -14,8 +14,11 @@ type WsStream = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
 pub struct KrakenPerpsWs {
     auth: KrakenAuth,
+    #[allow(dead_code)]
     user_stream: Arc<Mutex<Option<mpsc::Receiver<UserEvent>>>>,
+    #[allow(dead_code)]
     book_stream: Arc<Mutex<Option<mpsc::Receiver<BookUpdate>>>>,
+    #[allow(dead_code)]
     trade_stream: Arc<Mutex<Option<mpsc::Receiver<TradeEvent>>>>,
     connection_status: Arc<RwLock<ConnectionStatus>>,
     health_data: Arc<RwLock<HealthData>>,
@@ -123,6 +126,7 @@ impl KrakenPerpsWs {
 }
 
 // Kraken Futures WebSocket message types
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(tag = "event")]
 enum FuturesWsMessage {
@@ -138,7 +142,9 @@ enum FuturesWsMessage {
 
 #[derive(Debug, Deserialize)]
 struct FuturesOrderUpdate {
+    #[allow(dead_code)]
     event: String,
+    #[allow(dead_code)]
     feed: String,
     order_id: String,
     #[serde(rename = "cli_ord_id")]
@@ -153,8 +159,10 @@ struct FuturesOrderUpdate {
     limit_price: Option<f64>,
     #[serde(rename = "stop_price")]
     stop_price: Option<f64>,
+    #[allow(dead_code)]
     timestamp: i64,
     #[serde(rename = "last_update_timestamp")]
+    #[allow(dead_code)]
     last_update_timestamp: Option<i64>,
     #[serde(rename = "order_status")]
     order_status: String,
@@ -162,25 +170,32 @@ struct FuturesOrderUpdate {
 
 #[derive(Debug, Deserialize)]
 struct FuturesFillUpdate {
+    #[allow(dead_code)]
     event: String,
+    #[allow(dead_code)]
     feed: String,
     order_id: String,
     fill_id: String,
     symbol: String,
+    #[allow(dead_code)]
     side: String,
     price: f64,
     quantity: f64,
     #[serde(rename = "order_type")]
+    #[allow(dead_code)]
     order_type: String,
+    #[allow(dead_code)]
     timestamp: i64,
 }
 
 #[derive(Debug, Deserialize)]
 struct FuturesBookSnapshot {
+    #[allow(dead_code)]
     feed: String,
     product_id: String,
     bids: Vec<BookLevel>,
     asks: Vec<BookLevel>,
+    #[allow(dead_code)]
     timestamp: i64,
 }
 
@@ -192,6 +207,7 @@ struct BookLevel {
 
 #[derive(Debug, Deserialize)]
 struct FuturesTradeUpdate {
+    #[allow(dead_code)]
     feed: String,
     product_id: String,
     price: f64,
@@ -199,9 +215,11 @@ struct FuturesTradeUpdate {
     side: String,
     #[serde(rename = "time")]
     timestamp: i64,
+    #[allow(dead_code)]
     trade_id: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct FuturesPositionUpdate {
     feed: String,

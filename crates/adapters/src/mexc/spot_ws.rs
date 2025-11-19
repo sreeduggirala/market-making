@@ -1,4 +1,4 @@
-use crate::kraken::common::{converters, KrakenAuth, KRAKEN_SPOT_WS_AUTH_URL, KRAKEN_SPOT_WS_URL};
+use crate::mexc::common::{converters, MexcAuth, MEXC_SPOT_WS_URL};
 use crate::traits::*;
 use anyhow::{Context, Result};
 use futures_util::{SinkExt, StreamExt};
@@ -12,9 +12,10 @@ use tracing::{debug, error, warn};
 
 type WsStream = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
-pub struct KrakenSpotWs {
+#[derive(Clone)]
+pub struct MexcSpotWs {
     #[allow(dead_code)]
-    auth: KrakenAuth,
+    auth: MexcAuth,
     #[allow(dead_code)]
     user_stream: Arc<Mutex<Option<mpsc::Receiver<UserEvent>>>>,
     #[allow(dead_code)]
@@ -34,10 +35,10 @@ struct HealthData {
     error_msg: Option<String>,
 }
 
-impl KrakenSpotWs {
+impl MexcSpotWs {
     pub fn new(api_key: String, api_secret: String) -> Self {
         Self {
-            auth: KrakenAuth::new(api_key, api_secret),
+            auth: MexcAuth::new(api_key, api_secret),
             user_stream: Arc::new(Mutex::new(None)),
             book_stream: Arc::new(Mutex::new(None)),
             trade_stream: Arc::new(Mutex::new(None)),
@@ -52,32 +53,13 @@ impl KrakenSpotWs {
         }
     }
 
-    async fn connect_authenticated(&self) -> Result<WsStream> {
-        // First get a WebSocket token from REST API
-        let token = self.get_ws_token().await?;
-
-        let url = format!("{}?token={}", KRAKEN_SPOT_WS_AUTH_URL, token);
-        let (ws_stream, _) = connect_async(&url)
-            .await
-            .context("Failed to connect to Kraken WebSocket")?;
-
-        debug!("Connected to Kraken authenticated WebSocket");
-        Ok(ws_stream)
-    }
-
     async fn connect_public(&self) -> Result<WsStream> {
-        let (ws_stream, _) = connect_async(KRAKEN_SPOT_WS_URL)
+        let (ws_stream, _) = connect_async(MEXC_SPOT_WS_URL)
             .await
-            .context("Failed to connect to Kraken WebSocket")?;
+            .context("Failed to connect to MEXC WebSocket")?;
 
-        debug!("Connected to Kraken public WebSocket");
+        debug!("Connected to MEXC public WebSocket");
         Ok(ws_stream)
-    }
-
-    async fn get_ws_token(&self) -> Result<String> {
-        // This would require implementing REST call to get token
-        // For now, return placeholder - in production, call /0/private/GetWebSocketsToken
-        Ok("websocket_token_placeholder".to_string())
     }
 
     fn now_millis() -> UnixMillis {
@@ -88,112 +70,88 @@ impl KrakenSpotWs {
     }
 }
 
-// Kraken WebSocket message types
+// MEXC WebSocket message types
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum KrakenWsMessage {
-    Subscription(SubscriptionResponse),
-    Channel(ChannelMessage),
-    Heartbeat(HeartbeatMessage),
-    SystemStatus(SystemStatusMessage),
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-struct SubscriptionResponse {
-    #[serde(rename = "channelID")]
-    channel_id: Option<u64>,
-    #[serde(rename = "channelName")]
-    channel_name: Option<String>,
-    event: String,
-    pair: Option<String>,
-    subscription: Option<Value>,
-    status: Option<String>,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-struct ChannelMessage {
-    channel: String,
-    #[serde(rename = "type")]
-    msg_type: String,
-    data: Vec<Value>,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-struct HeartbeatMessage {
-    event: String,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-struct SystemStatusMessage {
-    event: String,
-    status: String,
-    version: Option<String>,
+struct MexcWsResponse {
+    #[serde(rename = "c")]
+    channel: Option<String>,
+    #[serde(rename = "d")]
+    data: Option<Value>,
+    #[serde(rename = "s")]
+    symbol: Option<String>,
+    #[serde(rename = "t")]
+    timestamp: Option<u64>,
 }
 
 // Order update from WebSocket
 #[derive(Debug, Deserialize)]
-struct KrakenWsOrder {
-    #[serde(rename = "order_id")]
+struct MexcWsOrder {
+    #[serde(rename = "i")]
     order_id: String,
-    #[serde(rename = "cl_ord_id")]
-    cl_ord_id: Option<String>,
+    #[serde(rename = "c")]
+    client_order_id: Option<String>,
+    #[serde(rename = "s")]
     symbol: String,
+    #[serde(rename = "S")]
     side: String,
+    #[serde(rename = "o")]
     order_type: String,
-    order_qty: String,
-    limit_price: Option<String>,
-    filled_qty: Option<String>,
-    order_status: String,
-    #[allow(dead_code)]
-    timestamp: String,
+    #[serde(rename = "q")]
+    quantity: String,
+    #[serde(rename = "p")]
+    price: Option<String>,
+    #[serde(rename = "z")]
+    executed_qty: String,
+    #[serde(rename = "X")]
+    status: String,
+    #[serde(rename = "T")]
+    timestamp: u64,
 }
 
 // Book update from WebSocket
 #[derive(Debug, Deserialize)]
-struct KrakenWsBook {
-    symbol: String,
-    bids: Vec<Vec<String>>,
-    asks: Vec<Vec<String>>,
-    checksum: Option<u32>,
-    #[allow(dead_code)]
-    timestamp: String,
+struct MexcWsBookUpdate {
+    #[serde(rename = "asks")]
+    asks: Vec<MexcBookLevel>,
+    #[serde(rename = "bids")]
+    bids: Vec<MexcBookLevel>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MexcBookLevel {
+    #[serde(rename = "p")]
+    price: String,
+    #[serde(rename = "v")]
+    volume: String,
 }
 
 // Trade update from WebSocket
 #[derive(Debug, Deserialize)]
-struct KrakenWsTrade {
-    symbol: String,
-    side: String,
-    price: f64,
-    qty: f64,
+struct MexcWsTrade {
+    #[serde(rename = "p")]
+    price: String,
+    #[serde(rename = "v")]
+    quantity: String,
+    #[serde(rename = "S")]
     #[allow(dead_code)]
-    ord_type: Option<String>,
-    #[allow(dead_code)]
-    trade_id: Option<u64>,
-    #[allow(dead_code)]
-    timestamp: String,
+    side: i32, // 1 = buy, 2 = sell
+    #[serde(rename = "t")]
+    timestamp: u64,
 }
 
 #[async_trait::async_trait]
-impl SpotWs for KrakenSpotWs {
+impl SpotWs for MexcSpotWs {
     async fn subscribe_user(&self) -> Result<mpsc::Receiver<UserEvent>> {
         let (tx, rx) = mpsc::channel(1000);
 
-        let mut ws = self.connect_authenticated().await?;
+        let mut ws = self.connect_public().await?;
         *self.connection_status.write().await = ConnectionStatus::Connected;
 
-        // Subscribe to user events
+        // Subscribe to user events (requires listen key - simplified for now)
         let subscribe_msg = serde_json::json!({
-            "method": "subscribe",
-            "params": {
-                "channel": "executions",
-                "snapshot": false
-            }
+            "method": "SUBSCRIPTION",
+            "params": ["spot@private.account.v3.api"]
         });
 
         ws.send(Message::Text(subscribe_msg.to_string()))
@@ -244,20 +202,19 @@ impl SpotWs for KrakenSpotWs {
         let mut ws = self.connect_public().await?;
 
         // Subscribe to order books
-        for symbol in symbols {
-            let subscribe_msg = serde_json::json!({
-                "method": "subscribe",
-                "params": {
-                    "channel": "book",
-                    "symbol": [symbol],
-                    "depth": 10
-                }
-            });
+        let channels: Vec<String> = symbols
+            .iter()
+            .map(|s| format!("spot@public.increase.depth.v3.api@{}", s))
+            .collect();
 
-            ws.send(Message::Text(subscribe_msg.to_string()))
-                .await
-                .context("Failed to send book subscription")?;
-        }
+        let subscribe_msg = serde_json::json!({
+            "method": "SUBSCRIPTION",
+            "params": channels
+        });
+
+        ws.send(Message::Text(subscribe_msg.to_string()))
+            .await
+            .context("Failed to send book subscription")?;
 
         // Spawn task to handle incoming messages
         let tx_clone = tx.clone();
@@ -292,18 +249,18 @@ impl SpotWs for KrakenSpotWs {
 
             // Outer reconnection loop - runs forever, reconnecting on failures
             loop {
-                debug!("Connecting to Kraken trade stream (attempt #{})", reconnect_count + 1);
+                debug!("Connecting to MEXC trade stream (attempt #{})", reconnect_count + 1);
 
                 // Connect to WebSocket
-                let ws_result = connect_async(KRAKEN_SPOT_WS_URL).await;
+                let ws_result = connect_async(MEXC_SPOT_WS_URL).await;
                 let mut ws = match ws_result {
                     Ok((stream, _)) => {
-                        debug!("Connected to Kraken WebSocket for trades");
+                        debug!("Connected to MEXC WebSocket for trades");
                         *connection_status.write().await = ConnectionStatus::Connected;
                         stream
                     }
                     Err(e) => {
-                        error!("Failed to connect to Kraken WebSocket: {}", e);
+                        error!("Failed to connect to MEXC WebSocket: {}", e);
                         *connection_status.write().await = ConnectionStatus::Error;
                         health_data.write().await.error_msg = Some(e.to_string());
                         reconnect_count += 1;
@@ -316,25 +273,18 @@ impl SpotWs for KrakenSpotWs {
                 };
 
                 // Subscribe to all symbols
-                let mut subscription_failed = false;
-                for symbol in &symbols_vec {
-                    let subscribe_msg = serde_json::json!({
-                        "method": "subscribe",
-                        "params": {
-                            "channel": "trade",
-                            "symbol": [symbol]
-                        }
-                    });
+                let channels: Vec<String> = symbols_vec
+                    .iter()
+                    .map(|s| format!("spot@public.deals.v3.api@{}", s))
+                    .collect();
 
-                    if let Err(e) = ws.send(Message::Text(subscribe_msg.to_string())).await {
-                        error!("Failed to send subscription for {}: {}", symbol, e);
-                        subscription_failed = true;
-                        break;
-                    }
-                }
+                let subscribe_msg = serde_json::json!({
+                    "method": "SUBSCRIPTION",
+                    "params": channels
+                });
 
-                if subscription_failed {
-                    warn!("Subscription failed, reconnecting...");
+                if let Err(e) = ws.send(Message::Text(subscribe_msg.to_string())).await {
+                    error!("Failed to send subscription: {}", e);
                     reconnect_count += 1;
                     health_data.write().await.reconnect_count = reconnect_count;
                     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -366,18 +316,18 @@ impl SpotWs for KrakenSpotWs {
                                     health_data.write().await.last_pong_ms = Some(Self::now_millis());
                                 }
                                 Some(Ok(Message::Close(frame))) => {
-                                    warn!("Kraken WebSocket closed: {:?}", frame);
+                                    warn!("MEXC WebSocket closed: {:?}", frame);
                                     *connection_status.write().await = ConnectionStatus::Disconnected;
                                     break;
                                 }
                                 Some(Err(e)) => {
-                                    error!("Kraken WebSocket error: {}", e);
+                                    error!("MEXC WebSocket error: {}", e);
                                     *connection_status.write().await = ConnectionStatus::Error;
                                     health_data.write().await.error_msg = Some(e.to_string());
                                     break;
                                 }
                                 None => {
-                                    warn!("Kraken WebSocket stream ended");
+                                    warn!("MEXC WebSocket stream ended");
                                     *connection_status.write().await = ConnectionStatus::Disconnected;
                                     break;
                                 }
@@ -388,7 +338,7 @@ impl SpotWs for KrakenSpotWs {
                 }
 
                 // Connection closed, prepare to reconnect
-                warn!("Kraken trade stream disconnected. Reconnecting immediately...");
+                warn!("MEXC trade stream disconnected. Reconnecting immediately...");
                 *connection_status.write().await = ConnectionStatus::Reconnecting;
                 reconnect_count += 1;
                 health_data.write().await.reconnect_count = reconnect_count;
@@ -437,44 +387,19 @@ impl SpotWs for KrakenSpotWs {
     }
 }
 
-impl KrakenSpotWs {
+impl MexcSpotWs {
     async fn handle_user_message(text: &str, tx: &mpsc::Sender<UserEvent>) -> Result<()> {
         let value: Value = serde_json::from_str(text)?;
 
         // Check if it's an order update
-        if let Some(channel) = value.get("channel").and_then(|c| c.as_str()) {
-            match channel {
-                "executions" => {
-                    if let Some(data) = value.get("data").and_then(|d| d.as_array()) {
-                        for item in data {
-                            if let Ok(order) = serde_json::from_value::<KrakenWsOrder>(item.clone()) {
-                                let user_event = Self::kraken_order_to_user_event(order)?;
-                                let _ = tx.send(user_event).await;
-                            }
-                        }
+        if let Some(channel) = value.get("c").and_then(|c| c.as_str()) {
+            if channel.contains("account") {
+                if let Some(data) = value.get("d") {
+                    if let Ok(order) = serde_json::from_value::<MexcWsOrder>(data.clone()) {
+                        let user_event = Self::mexc_order_to_user_event(order)?;
+                        let _ = tx.send(user_event).await;
                     }
                 }
-                "balances" => {
-                    // Handle balance updates
-                    if let Some(data) = value.get("data").and_then(|d| d.as_array()) {
-                        for item in data {
-                            if let (Some(asset), Some(free), Some(locked)) = (
-                                item.get("asset").and_then(|a| a.as_str()),
-                                item.get("available").and_then(|a| a.as_str()),
-                                item.get("hold").and_then(|h| h.as_str()),
-                            ) {
-                                let _ = tx.send(UserEvent::Balance {
-                                    asset: asset.to_string(),
-                                    free: free.parse().unwrap_or(0.0),
-                                    locked: locked.parse().unwrap_or(0.0),
-                                    ex_ts_ms: Self::now_millis(),
-                                    recv_ms: Self::now_millis(),
-                                }).await;
-                            }
-                        }
-                    }
-                }
-                _ => {}
             }
         }
 
@@ -484,14 +409,12 @@ impl KrakenSpotWs {
     async fn handle_book_message(text: &str, tx: &mpsc::Sender<BookUpdate>) -> Result<()> {
         let value: Value = serde_json::from_str(text)?;
 
-        if let Some(channel) = value.get("channel").and_then(|c| c.as_str()) {
-            if channel == "book" {
-                if let Some(data) = value.get("data").and_then(|d| d.as_array()) {
-                    for item in data {
-                        if let Ok(book) = serde_json::from_value::<KrakenWsBook>(item.clone()) {
-                            let book_update = Self::kraken_book_to_update(book)?;
-                            let _ = tx.send(book_update).await;
-                        }
+        if let Some(channel) = value.get("c").and_then(|c| c.as_str()) {
+            if channel.contains("depth") {
+                if let (Some(data), Some(symbol)) = (value.get("d"), value.get("s").and_then(|s| s.as_str())) {
+                    if let Ok(book) = serde_json::from_value::<MexcWsBookUpdate>(data.clone()) {
+                        let book_update = Self::mexc_book_to_update(symbol, book)?;
+                        let _ = tx.send(book_update).await;
                     }
                 }
             }
@@ -503,13 +426,15 @@ impl KrakenSpotWs {
     async fn handle_trade_message(text: &str, tx: &mpsc::Sender<TradeEvent>) -> Result<()> {
         let value: Value = serde_json::from_str(text)?;
 
-        if let Some(channel) = value.get("channel").and_then(|c| c.as_str()) {
-            if channel == "trade" {
-                if let Some(data) = value.get("data").and_then(|d| d.as_array()) {
-                    for item in data {
-                        if let Ok(trade) = serde_json::from_value::<KrakenWsTrade>(item.clone()) {
-                            let trade_event = Self::kraken_trade_to_event(trade)?;
-                            let _ = tx.send(trade_event).await;
+        if let Some(channel) = value.get("c").and_then(|c| c.as_str()) {
+            if channel.contains("deals") {
+                if let (Some(data), Some(symbol)) = (value.get("d"), value.get("s").and_then(|s| s.as_str())) {
+                    if let Some(trades_array) = data.get("deals").and_then(|d| d.as_array()) {
+                        for trade_val in trades_array {
+                            if let Ok(trade) = serde_json::from_value::<MexcWsTrade>(trade_val.clone()) {
+                                let trade_event = Self::mexc_trade_to_event(symbol, trade)?;
+                                let _ = tx.send(trade_event).await;
+                            }
                         }
                     }
                 }
@@ -519,19 +444,17 @@ impl KrakenSpotWs {
         Ok(())
     }
 
-    fn kraken_order_to_user_event(order: KrakenWsOrder) -> Result<UserEvent> {
-        let filled_qty = order.filled_qty
-            .as_ref()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0.0);
-        let total_qty = order.order_qty.parse().unwrap_or(0.0);
+    fn mexc_order_to_user_event(order: MexcWsOrder) -> Result<UserEvent> {
+        let filled_qty = order.executed_qty.parse().unwrap_or(0.0);
+        let total_qty = order.quantity.parse().unwrap_or(0.0);
 
-        let status = match order.order_status.as_str() {
-            "pending" => OrderStatus::New,
-            "open" => OrderStatus::New,
-            "closed" => OrderStatus::Filled,
-            "canceled" => OrderStatus::Canceled,
-            "expired" => OrderStatus::Expired,
+        let status = match order.status.as_str() {
+            "NEW" => OrderStatus::New,
+            "PARTIALLY_FILLED" => OrderStatus::PartiallyFilled,
+            "FILLED" => OrderStatus::Filled,
+            "CANCELED" => OrderStatus::Canceled,
+            "REJECTED" => OrderStatus::Rejected,
+            "EXPIRED" => OrderStatus::Expired,
             _ => OrderStatus::Rejected,
         };
 
@@ -539,68 +462,64 @@ impl KrakenSpotWs {
 
         let order_obj = Order {
             venue_order_id: order.order_id,
-            client_order_id: order.cl_ord_id.unwrap_or_default(),
+            client_order_id: order.client_order_id.unwrap_or_default(),
             symbol: order.symbol,
-            ord_type: converters::from_kraken_order_type(&order.order_type),
-            side: converters::from_kraken_side(&order.side),
+            ord_type: converters::from_mexc_order_type(&order.order_type),
+            side: converters::from_mexc_side(&order.side),
             qty: total_qty,
-            price: order.limit_price.and_then(|p| p.parse().ok()),
+            price: order.price.and_then(|p| p.parse().ok()),
             stop_price: None,
             tif: None,
             status,
             filled_qty,
             remaining_qty: total_qty - filled_qty,
-            created_ms: now,
-            updated_ms: now,
+            created_ms: order.timestamp,
+            updated_ms: order.timestamp,
             recv_ms: now,
-            raw_status: Some(order.order_status),
+            raw_status: Some(order.status),
         };
 
         Ok(UserEvent::OrderUpdate(order_obj))
     }
 
-    fn kraken_book_to_update(book: KrakenWsBook) -> Result<BookUpdate> {
+    fn mexc_book_to_update(symbol: &str, book: MexcWsBookUpdate) -> Result<BookUpdate> {
         let mut bids = Vec::new();
         for bid in book.bids {
-            if bid.len() >= 2 {
-                let price = bid[0].parse().unwrap_or(0.0);
-                let qty = bid[1].parse().unwrap_or(0.0);
-                bids.push((price, qty));
-            }
+            let price = bid.price.parse().unwrap_or(0.0);
+            let qty = bid.volume.parse().unwrap_or(0.0);
+            bids.push((price, qty));
         }
 
         let mut asks = Vec::new();
         for ask in book.asks {
-            if ask.len() >= 2 {
-                let price = ask[0].parse().unwrap_or(0.0);
-                let qty = ask[1].parse().unwrap_or(0.0);
-                asks.push((price, qty));
-            }
+            let price = ask.price.parse().unwrap_or(0.0);
+            let qty = ask.volume.parse().unwrap_or(0.0);
+            asks.push((price, qty));
         }
 
         let now = Self::now_millis();
 
         Ok(BookUpdate::DepthDelta {
-            symbol: book.symbol,
+            symbol: symbol.to_string(),
             bids,
             asks,
-            seq: 0, // Kraken doesn't provide sequence numbers in this format
+            seq: 0,
             prev_seq: 0,
-            checksum: book.checksum,
+            checksum: None,
             ex_ts_ms: now,
             recv_ms: now,
         })
     }
 
-    fn kraken_trade_to_event(trade: KrakenWsTrade) -> Result<TradeEvent> {
+    fn mexc_trade_to_event(symbol: &str, trade: MexcWsTrade) -> Result<TradeEvent> {
         let now = Self::now_millis();
 
         Ok(TradeEvent {
-            symbol: trade.symbol,
-            px: trade.price,
-            qty: trade.qty,
-            taker_is_buy: trade.side.to_lowercase() == "buy",
-            ex_ts_ms: now,
+            symbol: symbol.to_string(),
+            px: trade.price.parse().unwrap_or(0.0),
+            qty: trade.quantity.parse().unwrap_or(0.0),
+            taker_is_buy: trade.side == 1,
+            ex_ts_ms: trade.timestamp,
             recv_ms: now,
         })
     }
