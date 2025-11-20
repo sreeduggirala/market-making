@@ -85,16 +85,21 @@ use crate::kraken::account::{
     KRAKEN_SPOT_WS_URL, KRAKEN_SPOT_WS_AUTH_URL,
 };
 use crate::traits::*;
+use crate::utils::{
+    CircuitBreaker, CircuitBreakerConfig, HeartbeatMonitor, HeartbeatConfig,
+    RateLimiter, RateLimiterConfig, ReconnectConfig, ReconnectStrategy,
+};
 use anyhow::{Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
 /// Type alias for WebSocket stream over TLS
 type WsStream = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
@@ -139,6 +144,7 @@ type WsStream = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 ///     println!("Event: {:?}", event);
 /// }
 /// ```
+#[derive(Clone)]
 pub struct KrakenSpotAdapter {
     /// HTTP client for REST API requests
     client: KrakenRestClient,
@@ -156,6 +162,19 @@ pub struct KrakenSpotAdapter {
 
     /// Health metrics for connection monitoring
     health_data: Arc<RwLock<HealthData>>,
+
+    // Production features
+    /// Rate limiter for REST API calls
+    rate_limiter: RateLimiter,
+
+    /// Circuit breaker for fault tolerance
+    circuit_breaker: CircuitBreaker,
+
+    /// Counter for reconnection attempts
+    reconnect_count: Arc<AtomicU32>,
+
+    /// Shutdown signal sender
+    shutdown_tx: Arc<Mutex<Option<tokio::sync::broadcast::Sender<()>>>>,
 }
 
 /// WebSocket connection health and performance metrics
@@ -211,7 +230,58 @@ impl KrakenSpotAdapter {
                 reconnect_count: 0,
                 error_msg: None,
             })),
+            rate_limiter: RateLimiter::new(RateLimiterConfig::kraken_spot()),
+            circuit_breaker: CircuitBreaker::new("kraken_spot", CircuitBreakerConfig::production()),
+            reconnect_count: Arc::new(AtomicU32::new(0)),
+            shutdown_tx: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Wraps API calls with rate limiting and circuit breaker
+    ///
+    /// This method ensures all REST API calls respect rate limits and benefit from
+    /// circuit breaker protection to prevent cascading failures.
+    async fn call_api<T, F, Fut>(&self, endpoint: &str, f: F) -> Result<T>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<T>>,
+    {
+        // Rate limit
+        if !self.rate_limiter.acquire().await {
+            anyhow::bail!("Rate limit reached for endpoint: {}", endpoint);
+        }
+
+        debug!("Calling Kraken API endpoint: {}", endpoint);
+
+        // Circuit breaker protection
+        match self.circuit_breaker.call(f).await {
+            Ok(result) => Ok(result),
+            Err(e) => {
+                let err_str = e.to_string();
+
+                // Handle rate limit errors with backoff
+                if err_str.contains("429") || err_str.to_lowercase().contains("rate limit") {
+                    warn!("Rate limit error detected on {}", endpoint);
+                    self.rate_limiter.handle_rate_limit_error().await;
+                }
+
+                Err(e)
+            }
+        }
+    }
+
+    /// Initiates graceful shutdown of all background tasks
+    pub async fn shutdown(&self) {
+        info!("Initiating graceful shutdown of Kraken adapter");
+
+        if let Some(tx) = self.shutdown_tx.lock().await.as_ref() {
+            let _ = tx.send(());
+        }
+
+        // Give tasks time to clean up
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+        info!("Kraken adapter shutdown complete");
     }
 
     /// Generates a unique client order ID for order placement
@@ -929,9 +999,27 @@ impl KrakenSpotAdapter {
     }
 
     async fn get_ws_token(&self) -> Result<String> {
-        // This would require implementing REST call to get token
-        // For now, return placeholder - in production, call /0/private/GetWebSocketsToken
-        Ok("websocket_token_placeholder".to_string())
+        use crate::kraken::account;
+        use serde::Deserialize;
+        use std::collections::HashMap;
+
+        #[derive(Deserialize)]
+        struct TokenResponse {
+            token: String,
+            expires: i64,
+        }
+
+        let params = HashMap::new();
+        let response: account::KrakenResponse<TokenResponse> = self
+            .client
+            .post_private("/0/private/GetWebSocketsToken", params)
+            .await
+            .context("Failed to get WebSocket token")?;
+
+        let token_data = response.into_result()?;
+        debug!("Obtained WebSocket token (expires: {})", token_data.expires);
+
+        Ok(token_data.token)
     }
 
     fn now_millis() -> UnixMillis {
@@ -1117,56 +1205,181 @@ impl KrakenSpotAdapter {
 impl SpotWs for KrakenSpotAdapter {
     async fn subscribe_user(&self) -> Result<mpsc::Receiver<UserEvent>> {
         let (tx, rx) = mpsc::channel(1000);
+        let adapter = self.clone();
 
-        let mut ws = self.connect_authenticated().await?;
-        *self.connection_status.write().await = ConnectionStatus::Connected;
-
-        // Subscribe to user events
-        let subscribe_msg = serde_json::json!({
-            "method": "subscribe",
-            "params": {
-                "channel": "executions",
-                "snapshot": false
-            }
-        });
-
-        ws.send(Message::Text(subscribe_msg.to_string()))
-            .await
-            .context("Failed to send subscription")?;
-
-        // Spawn task to handle incoming messages
-        let tx_clone = tx.clone();
-        let connection_status = self.connection_status.clone();
-        let health_data = self.health_data.clone();
+        // Create shutdown channel
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel(1);
+        {
+            let mut guard = adapter.shutdown_tx.lock().await;
+            *guard = Some(shutdown_tx);
+        }
 
         tokio::spawn(async move {
-            while let Some(msg) = ws.next().await {
-                match msg {
-                    Ok(Message::Text(text)) => {
-                        if let Err(e) = Self::handle_user_message(&text, &tx_clone).await {
-                            error!("Error handling user message: {}", e);
+            let reconnect_config = ReconnectConfig::production();
+            let mut strategy = ReconnectStrategy::new(reconnect_config);
+
+            'reconnect: loop {
+                // Check for shutdown signal
+                if shutdown_rx.try_recv().is_ok() {
+                    info!("Kraken user stream shutdown requested");
+                    break;
+                }
+
+                // Update status
+                {
+                    let mut status = adapter.connection_status.write().await;
+                    *status = ConnectionStatus::Connecting;
+                }
+
+                // Get WebSocket token
+                let token = match adapter.get_ws_token().await {
+                    Ok(t) => t,
+                    Err(e) => {
+                        error!("Failed to get WebSocket token: {}", e);
+                        if strategy.can_retry() {
+                            strategy.wait_before_retry().await;
+                            continue;
+                        } else {
+                            break;
                         }
                     }
-                    Ok(Message::Ping(_)) => {
-                        health_data.write().await.last_ping_ms = Some(Self::now_millis());
-                    }
-                    Ok(Message::Pong(_)) => {
-                        health_data.write().await.last_pong_ms = Some(Self::now_millis());
-                    }
-                    Ok(Message::Close(_)) => {
-                        warn!("WebSocket closed");
-                        *connection_status.write().await = ConnectionStatus::Disconnected;
-                        break;
-                    }
+                };
+
+                // Connect to authenticated WebSocket
+                let ws_result = adapter.connect_authenticated().await;
+                let mut ws = match ws_result {
+                    Ok(stream) => stream,
                     Err(e) => {
-                        error!("WebSocket error: {}", e);
-                        *connection_status.write().await = ConnectionStatus::Error;
-                        health_data.write().await.error_msg = Some(e.to_string());
-                        break;
+                        error!("WebSocket connection failed: {}", e);
+                        if strategy.can_retry() {
+                            strategy.wait_before_retry().await;
+                            continue;
+                        } else {
+                            break;
+                        }
                     }
-                    _ => {}
+                };
+
+                // Connection successful
+                strategy.reset();
+                let count = adapter.reconnect_count.fetch_add(1, Ordering::Relaxed);
+                info!("Kraken user WebSocket connected (reconnect #{})", count);
+
+                {
+                    let mut status = adapter.connection_status.write().await;
+                    *status = ConnectionStatus::Connected;
+                    let mut health = adapter.health_data.write().await;
+                    health.reconnect_count = count;
                 }
+
+                // Initialize heartbeat
+                let heartbeat = HeartbeatMonitor::new(HeartbeatConfig::production());
+
+                // Subscribe to executions
+                let subscribe_msg = serde_json::json!({
+                    "method": "subscribe",
+                    "params": {
+                        "channel": "executions",
+                        "snapshot": false,
+                        "token": token
+                    }
+                });
+
+                if let Err(e) = ws.send(Message::Text(subscribe_msg.to_string())).await {
+                    error!("Failed to send subscription: {}", e);
+                    continue 'reconnect;
+                }
+
+                debug!("Sent Kraken executions subscription");
+
+                // Message handling loop
+                'message_loop: loop {
+                    tokio::select! {
+                        // Check shutdown
+                        _ = shutdown_rx.recv() => {
+                            info!("Shutdown requested during message loop");
+                            break 'reconnect;
+                        }
+
+                        // Check heartbeat every 5 seconds
+                        _ = tokio::time::sleep(tokio::time::Duration::from_secs(5)) => {
+                            if !heartbeat.is_alive().await {
+                                warn!("Kraken heartbeat timeout - reconnecting");
+                                break 'message_loop;
+                            }
+                        }
+
+                        // Handle WebSocket messages
+                        msg = ws.next() => {
+                            match msg {
+                                Some(Ok(Message::Text(text))) => {
+                                    heartbeat.record_message_received().await;
+
+                                    if let Err(e) = Self::handle_user_message(&text, &tx).await {
+                                        warn!("Failed to parse user message: {} - raw: {}", e, text);
+                                    }
+                                }
+                                Some(Ok(Message::Ping(data))) => {
+                                    heartbeat.record_ping_sent().await;
+                                    {
+                                        let mut health = adapter.health_data.write().await;
+                                        health.last_ping_ms = Some(Self::now_millis());
+                                    }
+                                    if let Err(e) = ws.send(Message::Pong(data)).await {
+                                        error!("Failed to send pong: {}", e);
+                                        break 'message_loop;
+                                    }
+                                }
+                                Some(Ok(Message::Pong(_))) => {
+                                    heartbeat.record_pong_received().await;
+                                    {
+                                        let mut health = adapter.health_data.write().await;
+                                        health.last_pong_ms = Some(Self::now_millis());
+                                    }
+                                }
+                                Some(Ok(Message::Close(_))) => {
+                                    info!("Kraken WebSocket closed by server");
+                                    break 'message_loop;
+                                }
+                                Some(Err(e)) => {
+                                    error!("Kraken WebSocket error: {}", e);
+                                    {
+                                        let mut health = adapter.health_data.write().await;
+                                        health.error_msg = Some(e.to_string());
+                                    }
+                                    break 'message_loop;
+                                }
+                                None => {
+                                    warn!("Kraken WebSocket stream ended");
+                                    break 'message_loop;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+
+                // Connection lost - update status
+                {
+                    let mut status = adapter.connection_status.write().await;
+                    *status = ConnectionStatus::Reconnecting;
+                }
+
+                if !strategy.can_retry() {
+                    error!("Max Kraken reconnection attempts reached");
+                    break;
+                }
+
+                strategy.wait_before_retry().await;
             }
+
+            // Final status update
+            {
+                let mut status = adapter.connection_status.write().await;
+                *status = ConnectionStatus::Disconnected;
+            }
+
+            error!("Kraken user WebSocket task terminated");
         });
 
         Ok(rx)
@@ -1174,35 +1387,113 @@ impl SpotWs for KrakenSpotAdapter {
 
     async fn subscribe_books(&self, symbols: &[&str]) -> Result<mpsc::Receiver<BookUpdate>> {
         let (tx, rx) = mpsc::channel(1000);
+        let adapter = self.clone();
+        let symbols_vec: Vec<String> = symbols.iter().map(|s| s.to_string()).collect();
 
-        let mut ws = self.connect_public().await?;
-
-        // Subscribe to order books
-        for symbol in symbols {
-            let subscribe_msg = serde_json::json!({
-                "method": "subscribe",
-                "params": {
-                    "channel": "book",
-                    "symbol": [symbol],
-                    "depth": 10
-                }
-            });
-
-            ws.send(Message::Text(subscribe_msg.to_string()))
-                .await
-                .context("Failed to send book subscription")?;
-        }
-
-        // Spawn task to handle incoming messages
-        let tx_clone = tx.clone();
         tokio::spawn(async move {
-            while let Some(msg) = ws.next().await {
-                if let Ok(Message::Text(text)) = msg {
-                    if let Err(e) = Self::handle_book_message(&text, &tx_clone).await {
-                        error!("Error handling book message: {}", e);
+            let reconnect_config = ReconnectConfig::production();
+            let mut strategy = ReconnectStrategy::new(reconnect_config);
+
+            'reconnect: loop {
+                // Connect to public WebSocket
+                let ws_result = adapter.connect_public().await;
+                let mut ws = match ws_result {
+                    Ok(stream) => stream,
+                    Err(e) => {
+                        error!("Book WebSocket connection failed: {}", e);
+                        if strategy.can_retry() {
+                            strategy.wait_before_retry().await;
+                            continue;
+                        } else {
+                            break;
+                        }
+                    }
+                };
+
+                // Connection successful
+                strategy.reset();
+                info!("Kraken book WebSocket connected");
+
+                // Initialize heartbeat
+                let heartbeat = HeartbeatMonitor::new(HeartbeatConfig::production());
+
+                // Subscribe to all symbols
+                for symbol in &symbols_vec {
+                    let subscribe_msg = serde_json::json!({
+                        "method": "subscribe",
+                        "params": {
+                            "channel": "book",
+                            "symbol": [symbol],
+                            "depth": 10
+                        }
+                    });
+
+                    if let Err(e) = ws.send(Message::Text(subscribe_msg.to_string())).await {
+                        error!("Failed to send book subscription for {}: {}", symbol, e);
+                        continue 'reconnect;
                     }
                 }
+
+                debug!("Sent Kraken book subscriptions for {} symbols", symbols_vec.len());
+
+                // Message handling loop
+                'message_loop: loop {
+                    tokio::select! {
+                        // Check heartbeat every 5 seconds
+                        _ = tokio::time::sleep(tokio::time::Duration::from_secs(5)) => {
+                            if !heartbeat.is_alive().await {
+                                warn!("Kraken book heartbeat timeout - reconnecting");
+                                break 'message_loop;
+                            }
+                        }
+
+                        // Handle WebSocket messages
+                        msg = ws.next() => {
+                            match msg {
+                                Some(Ok(Message::Text(text))) => {
+                                    heartbeat.record_message_received().await;
+
+                                    if let Err(e) = Self::handle_book_message(&text, &tx).await {
+                                        warn!("Failed to parse book message: {}", e);
+                                    }
+                                }
+                                Some(Ok(Message::Ping(data))) => {
+                                    heartbeat.record_ping_sent().await;
+                                    if let Err(e) = ws.send(Message::Pong(data)).await {
+                                        error!("Failed to send pong: {}", e);
+                                        break 'message_loop;
+                                    }
+                                }
+                                Some(Ok(Message::Pong(_))) => {
+                                    heartbeat.record_pong_received().await;
+                                }
+                                Some(Ok(Message::Close(_))) => {
+                                    info!("Kraken book WebSocket closed by server");
+                                    break 'message_loop;
+                                }
+                                Some(Err(e)) => {
+                                    error!("Kraken book WebSocket error: {}", e);
+                                    break 'message_loop;
+                                }
+                                None => {
+                                    warn!("Kraken book WebSocket stream ended");
+                                    break 'message_loop;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+
+                if !strategy.can_retry() {
+                    error!("Max Kraken book reconnection attempts reached");
+                    break;
+                }
+
+                strategy.wait_before_retry().await;
             }
+
+            error!("Kraken book WebSocket task terminated");
         });
 
         Ok(rx)
@@ -1210,34 +1501,112 @@ impl SpotWs for KrakenSpotAdapter {
 
     async fn subscribe_trades(&self, symbols: &[&str]) -> Result<mpsc::Receiver<TradeEvent>> {
         let (tx, rx) = mpsc::channel(1000);
+        let adapter = self.clone();
+        let symbols_vec: Vec<String> = symbols.iter().map(|s| s.to_string()).collect();
 
-        let mut ws = self.connect_public().await?;
-
-        // Subscribe to trades
-        for symbol in symbols {
-            let subscribe_msg = serde_json::json!({
-                "method": "subscribe",
-                "params": {
-                    "channel": "trade",
-                    "symbol": [symbol]
-                }
-            });
-
-            ws.send(Message::Text(subscribe_msg.to_string()))
-                .await
-                .context("Failed to send trade subscription")?;
-        }
-
-        // Spawn task to handle incoming messages
-        let tx_clone = tx.clone();
         tokio::spawn(async move {
-            while let Some(msg) = ws.next().await {
-                if let Ok(Message::Text(text)) = msg {
-                    if let Err(e) = Self::handle_trade_message(&text, &tx_clone).await {
-                        error!("Error handling trade message: {}", e);
+            let reconnect_config = ReconnectConfig::production();
+            let mut strategy = ReconnectStrategy::new(reconnect_config);
+
+            'reconnect: loop {
+                // Connect to public WebSocket
+                let ws_result = adapter.connect_public().await;
+                let mut ws = match ws_result {
+                    Ok(stream) => stream,
+                    Err(e) => {
+                        error!("Trade WebSocket connection failed: {}", e);
+                        if strategy.can_retry() {
+                            strategy.wait_before_retry().await;
+                            continue;
+                        } else {
+                            break;
+                        }
+                    }
+                };
+
+                // Connection successful
+                strategy.reset();
+                info!("Kraken trade WebSocket connected");
+
+                // Initialize heartbeat
+                let heartbeat = HeartbeatMonitor::new(HeartbeatConfig::production());
+
+                // Subscribe to all symbols
+                for symbol in &symbols_vec {
+                    let subscribe_msg = serde_json::json!({
+                        "method": "subscribe",
+                        "params": {
+                            "channel": "trade",
+                            "symbol": [symbol]
+                        }
+                    });
+
+                    if let Err(e) = ws.send(Message::Text(subscribe_msg.to_string())).await {
+                        error!("Failed to send trade subscription for {}: {}", symbol, e);
+                        continue 'reconnect;
                     }
                 }
+
+                debug!("Sent Kraken trade subscriptions for {} symbols", symbols_vec.len());
+
+                // Message handling loop
+                'message_loop: loop {
+                    tokio::select! {
+                        // Check heartbeat every 5 seconds
+                        _ = tokio::time::sleep(tokio::time::Duration::from_secs(5)) => {
+                            if !heartbeat.is_alive().await {
+                                warn!("Kraken trade heartbeat timeout - reconnecting");
+                                break 'message_loop;
+                            }
+                        }
+
+                        // Handle WebSocket messages
+                        msg = ws.next() => {
+                            match msg {
+                                Some(Ok(Message::Text(text))) => {
+                                    heartbeat.record_message_received().await;
+
+                                    if let Err(e) = Self::handle_trade_message(&text, &tx).await {
+                                        warn!("Failed to parse trade message: {}", e);
+                                    }
+                                }
+                                Some(Ok(Message::Ping(data))) => {
+                                    heartbeat.record_ping_sent().await;
+                                    if let Err(e) = ws.send(Message::Pong(data)).await {
+                                        error!("Failed to send pong: {}", e);
+                                        break 'message_loop;
+                                    }
+                                }
+                                Some(Ok(Message::Pong(_))) => {
+                                    heartbeat.record_pong_received().await;
+                                }
+                                Some(Ok(Message::Close(_))) => {
+                                    info!("Kraken trade WebSocket closed by server");
+                                    break 'message_loop;
+                                }
+                                Some(Err(e)) => {
+                                    error!("Kraken trade WebSocket error: {}", e);
+                                    break 'message_loop;
+                                }
+                                None => {
+                                    warn!("Kraken trade WebSocket stream ended");
+                                    break 'message_loop;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+
+                if !strategy.can_retry() {
+                    error!("Max Kraken trade reconnection attempts reached");
+                    break;
+                }
+
+                strategy.wait_before_retry().await;
             }
+
+            error!("Kraken trade WebSocket task terminated");
         });
 
         Ok(rx)

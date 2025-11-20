@@ -178,6 +178,7 @@ impl KrakenAuth {
 /// # Thread Safety
 ///
 /// This struct is thread-safe and can be cloned cheaply (reqwest::Client uses Arc internally).
+#[derive(Clone)]
 pub struct KrakenRestClient {
     /// Underlying HTTP client (reuses connections via connection pooling)
     client: Client,
@@ -190,6 +191,20 @@ pub struct KrakenRestClient {
 }
 
 impl KrakenRestClient {
+    /// Creates a production-ready HTTP client with proper connection pooling and timeouts
+    fn build_client() -> Client {
+        use std::time::Duration;
+
+        Client::builder()
+            .pool_max_idle_per_host(10)
+            .pool_idle_timeout(Duration::from_secs(90))
+            .timeout(Duration::from_secs(30))
+            .connect_timeout(Duration::from_secs(10))
+            .tcp_keepalive(Duration::from_secs(60))
+            .build()
+            .expect("Failed to build HTTP client")
+    }
+
     /// Creates a new HTTP client configured for Kraken Spot REST API
     ///
     /// # Arguments
@@ -208,7 +223,7 @@ impl KrakenRestClient {
     /// ```
     pub fn new_spot(auth: Option<KrakenAuth>) -> Self {
         Self {
-            client: Client::new(),
+            client: Self::build_client(),
             auth,
             base_url: KRAKEN_SPOT_REST_URL.to_string(),
         }
@@ -228,7 +243,7 @@ impl KrakenRestClient {
     /// ```
     pub fn new_futures(auth: Option<KrakenAuth>) -> Self {
         Self {
-            client: Client::new(),
+            client: Self::build_client(),
             auth,
             base_url: KRAKEN_FUTURES_REST_URL.to_string(),
         }

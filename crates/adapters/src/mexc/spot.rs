@@ -91,10 +91,16 @@ use crate::mexc::account::{
     converters, MexcAuth, MexcRestClient, MEXC_SPOT_WS_PRIVATE_URL, MEXC_SPOT_WS_URL,
 };
 use crate::traits::*;
+use crate::utils::{
+    CircuitBreaker, CircuitBreakerConfig, HeartbeatMonitor, HeartbeatConfig,
+    RateLimiter, RateLimiterConfig, ReconnectConfig, ReconnectStrategy,
+};
 use anyhow::{Context, Result};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, Mutex, RwLock};
+use tracing::{debug, error, info, warn};
 
 /// Unified MEXC Spot market adapter
 ///
@@ -132,6 +138,7 @@ use tokio::sync::{mpsc, Mutex, RwLock};
 ///     println!("Event: {:?}", event);
 /// }
 /// ```
+#[derive(Clone)]
 pub struct MexcSpotAdapter {
     /// HTTP client for REST API requests
     client: MexcRestClient,
@@ -144,6 +151,12 @@ pub struct MexcSpotAdapter {
 
     /// Current WebSocket connection status
     connection_status: Arc<RwLock<ConnectionStatus>>,
+
+    /// Production fields for resilience
+    rate_limiter: RateLimiter,
+    circuit_breaker: CircuitBreaker,
+    reconnect_count: Arc<AtomicU32>,
+    shutdown_tx: Arc<Mutex<Option<tokio::sync::broadcast::Sender<()>>>>,
 }
 
 impl MexcSpotAdapter {
@@ -173,7 +186,88 @@ impl MexcSpotAdapter {
             auth,
             listen_key: Arc::new(Mutex::new(None)),
             connection_status: Arc::new(RwLock::new(ConnectionStatus::Disconnected)),
+            rate_limiter: RateLimiter::new(RateLimiterConfig::mexc_spot()),
+            circuit_breaker: CircuitBreaker::new("mexc_spot", CircuitBreakerConfig::production()),
+            reconnect_count: Arc::new(AtomicU32::new(0)),
+            shutdown_tx: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Wraps REST API calls with rate limiting and circuit breaker
+    async fn call_api<T, F, Fut>(&self, endpoint: &str, f: F) -> Result<T>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<T>>,
+    {
+        // Rate limiting
+        if !self.rate_limiter.acquire().await {
+            anyhow::bail!("Rate limit reached for endpoint: {}", endpoint);
+        }
+
+        debug!("Calling MEXC API endpoint: {}", endpoint);
+
+        // Circuit breaker
+        match self.circuit_breaker.call(f).await {
+            Ok(result) => Ok(result),
+            Err(e) => {
+                let err_str = e.to_string();
+                if err_str.contains("429") || err_str.to_lowercase().contains("rate limit") {
+                    warn!("Rate limit error detected on {}", endpoint);
+                    self.rate_limiter.handle_rate_limit_error().await;
+                }
+                Err(e)
+            }
+        }
+    }
+
+    /// Gracefully shuts down all background tasks
+    pub async fn shutdown(&self) {
+        info!("Initiating graceful shutdown of MEXC Spot adapter");
+
+        if let Some(tx) = self.shutdown_tx.lock().await.as_ref() {
+            let _ = tx.send(());
+        }
+
+        // Delete listen key if exists
+        if let Some(key) = self.listen_key.lock().await.as_ref() {
+            let _ = self.delete_listen_key(key).await;
+        }
+
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        info!("MEXC Spot adapter shutdown complete");
+    }
+
+    /// Spawns a background task to automatically renew the listen key every 30 minutes
+    fn spawn_listen_key_renewal_task(
+        listen_key: Arc<Mutex<Option<String>>>,
+        client: MexcRestClient,
+        mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
+    ) {
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30 * 60)); // 30 minutes
+
+            loop {
+                tokio::select! {
+                    _ = shutdown_rx.recv() => {
+                        info!("Listen key renewal task shutting down");
+                        break;
+                    }
+                    _ = interval.tick() => {
+                        if let Some(key) = listen_key.lock().await.as_ref() {
+                            info!("Extending MEXC listen key");
+                            // Create new params for extension
+                            let mut params = std::collections::HashMap::new();
+                            params.insert("listenKey".to_string(), key.clone());
+
+                            match client.post_private::<serde_json::Value>("/api/v3/userDataStream", params).await {
+                                Ok(_) => debug!("Listen key extended successfully"),
+                                Err(e) => warn!("Failed to extend listen key: {}", e),
+                            }
+                        }
+                    }
+                }
+            }
+        });
     }
 
     /// Generates a unique client order ID for order placement
@@ -1357,52 +1451,140 @@ impl SpotWs for MexcSpotAdapter {
     /// - Messages are parsed and converted to `UserEvent` enum variants
     async fn subscribe_user(&self) -> Result<mpsc::Receiver<UserEvent>> {
         use futures_util::{SinkExt, StreamExt};
-        use serde::Deserialize;
-        use serde_json::Value;
         use tokio_tungstenite::{connect_async, tungstenite::Message};
 
-        // Create listen key for user data stream
-        let listen_key = self.create_listen_key().await?;
-
-        // Store listen key for later renewal
-        {
-            let mut key_guard = self.listen_key.lock().await;
-            *key_guard = Some(listen_key.clone());
-        }
-
-        let url = format!("{}?listenKey={}", MEXC_SPOT_WS_PRIVATE_URL, listen_key);
-        let (ws_stream, _) = connect_async(&url)
-            .await
-            .context("Failed to connect to WebSocket")?;
-
-        let (mut write, mut read) = ws_stream.split();
         let (tx, rx) = mpsc::channel(1000);
+        let adapter = self.clone();
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel(1);
 
-        // Update connection status
+        // Store shutdown sender
         {
-            let mut status = self.connection_status.write().await;
-            *status = ConnectionStatus::Connected;
+            let mut guard = adapter.shutdown_tx.lock().await;
+            *guard = Some(shutdown_tx);
         }
 
-        // Spawn background task to handle messages
+        // Spawn reconnection loop
         tokio::spawn(async move {
-            while let Some(msg) = read.next().await {
-                match msg {
-                    Ok(Message::Text(text)) => {
-                        if let Ok(event) = parse_user_event(&text) {
-                            if tx.send(event).await.is_err() {
-                                break; // Receiver dropped
+            let reconnect_config = ReconnectConfig::production();
+            let mut strategy = ReconnectStrategy::new(reconnect_config);
+
+            'reconnect: loop {
+                let reconnect_num = adapter.reconnect_count.load(Ordering::Relaxed);
+                info!("MEXC Spot user stream connecting (reconnect #{})", reconnect_num);
+
+                // Create listen key
+                let listen_key = match adapter.create_listen_key().await {
+                    Ok(key) => {
+                        // Store listen key
+                        let mut key_guard = adapter.listen_key.lock().await;
+                        *key_guard = Some(key.clone());
+                        key
+                    }
+                    Err(e) => {
+                        error!("Failed to create MEXC listen key: {}", e);
+                        if !strategy.can_retry() {
+                            break 'reconnect;
+                        }
+                        let delay = strategy.wait_before_retry().await;
+                        warn!("MEXC user stream reconnecting - waiting {}ms", delay);
+                        continue 'reconnect;
+                    }
+                };
+
+                // Connect to WebSocket
+                let url = format!("{}?listenKey={}", MEXC_SPOT_WS_PRIVATE_URL, listen_key);
+                let mut ws = match connect_async(&url).await {
+                    Ok((stream, _)) => stream,
+                    Err(e) => {
+                        error!("MEXC WebSocket connection failed: {}", e);
+                        if !strategy.can_retry() {
+                            break 'reconnect;
+                        }
+                        let delay = strategy.wait_before_retry().await;
+                        warn!("MEXC user stream reconnecting - waiting {}ms", delay);
+                        continue 'reconnect;
+                    }
+                };
+
+                // Connection successful - reset strategy and update status
+                strategy.reset();
+                adapter.reconnect_count.fetch_add(1, Ordering::Relaxed);
+                info!("MEXC Spot user WebSocket connected (reconnect #{})", reconnect_num);
+
+                let heartbeat = HeartbeatMonitor::new(HeartbeatConfig::production());
+
+                // Start listen key renewal task
+                let renewal_shutdown_rx = adapter.shutdown_tx.lock().await.as_ref().unwrap().subscribe();
+                Self::spawn_listen_key_renewal_task(
+                    adapter.listen_key.clone(),
+                    adapter.client.clone(),
+                    renewal_shutdown_rx,
+                );
+
+                // Message handling loop
+                'message_loop: loop {
+                    tokio::select! {
+                        _ = shutdown_rx.recv() => {
+                            info!("MEXC user stream shutdown signal received");
+                            break 'reconnect;
+                        }
+                        _ = tokio::time::sleep(tokio::time::Duration::from_secs(5)) => {
+                            if !heartbeat.is_alive().await {
+                                warn!("MEXC user stream heartbeat timeout");
+                                break 'message_loop;
+                            }
+                        }
+                        msg = ws.next() => {
+                            match msg {
+                                Some(Ok(Message::Text(text))) => {
+                                    heartbeat.record_message_received().await;
+                                    if let Ok(event) = parse_user_event(&text) {
+                                        if tx.send(event).await.is_err() {
+                                            info!("MEXC user stream receiver dropped");
+                                            break 'reconnect;
+                                        }
+                                    }
+                                }
+                                Some(Ok(Message::Ping(data))) => {
+                                    heartbeat.record_pong_received().await;
+                                    if ws.send(Message::Pong(data)).await.is_err() {
+                                        warn!("MEXC failed to send pong");
+                                        break 'message_loop;
+                                    }
+                                    heartbeat.record_ping_sent().await;
+                                }
+                                Some(Ok(Message::Pong(_))) => {
+                                    heartbeat.record_pong_received().await;
+                                }
+                                Some(Ok(Message::Close(_))) => {
+                                    warn!("MEXC WebSocket closed by server");
+                                    break 'message_loop;
+                                }
+                                Some(Err(e)) => {
+                                    error!("MEXC WebSocket error: {}", e);
+                                    break 'message_loop;
+                                }
+                                None => {
+                                    warn!("MEXC WebSocket stream ended");
+                                    break 'message_loop;
+                                }
+                                _ => {}
                             }
                         }
                     }
-                    Ok(Message::Ping(data)) => {
-                        let _ = write.send(Message::Pong(data)).await;
-                    }
-                    Ok(Message::Close(_)) => break,
-                    Err(_) => break,
-                    _ => {}
                 }
+
+                // Connection lost - attempt reconnection
+                if !strategy.can_retry() {
+                    error!("MEXC user stream max reconnection attempts reached");
+                    break 'reconnect;
+                }
+
+                let delay = strategy.wait_before_retry().await;
+                warn!("MEXC user stream reconnecting - waiting {}ms", delay);
             }
+
+            info!("MEXC user stream task terminated");
         });
 
         Ok(rx)
@@ -1437,47 +1619,112 @@ impl SpotWs for MexcSpotAdapter {
         use futures_util::{SinkExt, StreamExt};
         use tokio_tungstenite::{connect_async, tungstenite::Message};
 
-        let (ws_stream, _) = connect_async(MEXC_SPOT_WS_URL)
-            .await
-            .context("Failed to connect to WebSocket")?;
-
-        let (mut write, mut read) = ws_stream.split();
         let (tx, rx) = mpsc::channel(1000);
+        let adapter = self.clone();
+        let symbols_owned: Vec<String> = symbols.iter().map(|s| s.to_string()).collect();
+        let mut shutdown_rx = adapter.shutdown_tx.lock().await.as_ref().unwrap().subscribe();
 
-        // Subscribe to depth streams for each symbol
-        for symbol in symbols {
-            let sub_msg = serde_json::json!({
-                "method": "SUBSCRIPTION",
-                "params": [format!("{}@depth", symbol.to_lowercase())]
-            });
-
-            write
-                .send(Message::Text(sub_msg.to_string()))
-                .await
-                .context("Failed to send subscription")?;
-        }
-
-        // Spawn background task to handle messages
         tokio::spawn(async move {
-            let mut seq_counter = 0u64;
+            let reconnect_config = ReconnectConfig::production();
+            let mut strategy = ReconnectStrategy::new(reconnect_config);
 
-            while let Some(msg) = read.next().await {
-                match msg {
-                    Ok(Message::Text(text)) => {
-                        if let Ok(update) = parse_book_update(&text, &mut seq_counter) {
-                            if tx.send(update).await.is_err() {
-                                break;
+            'reconnect: loop {
+                let reconnect_num = adapter.reconnect_count.load(Ordering::Relaxed);
+                info!("MEXC Spot books stream connecting (reconnect #{})", reconnect_num);
+
+                let mut ws = match connect_async(MEXC_SPOT_WS_URL).await {
+                    Ok((stream, _)) => stream,
+                    Err(e) => {
+                        error!("MEXC books WebSocket connection failed: {}", e);
+                        if !strategy.can_retry() {
+                            break 'reconnect;
+                        }
+                        let delay = strategy.wait_before_retry().await;
+                        warn!("MEXC books stream reconnecting - waiting {}ms", delay);
+                        continue 'reconnect;
+                    }
+                };
+
+                // Subscribe to all symbols
+                for symbol in &symbols_owned {
+                    let sub_msg = serde_json::json!({
+                        "method": "SUBSCRIPTION",
+                        "params": [format!("{}@depth", symbol.to_lowercase())]
+                    });
+                    if ws.send(Message::Text(sub_msg.to_string())).await.is_err() {
+                        warn!("Failed to subscribe to {}", symbol);
+                        continue 'reconnect;
+                    }
+                }
+
+                strategy.reset();
+                info!("MEXC Spot books WebSocket connected (reconnect #{})", reconnect_num);
+
+                let heartbeat = HeartbeatMonitor::new(HeartbeatConfig::production());
+                let mut seq_counter = 0u64;
+
+                'message_loop: loop {
+                    tokio::select! {
+                        _ = shutdown_rx.recv() => {
+                            info!("MEXC books stream shutdown signal received");
+                            break 'reconnect;
+                        }
+                        _ = tokio::time::sleep(tokio::time::Duration::from_secs(5)) => {
+                            if !heartbeat.is_alive().await {
+                                warn!("MEXC books stream heartbeat timeout");
+                                break 'message_loop;
+                            }
+                        }
+                        msg = ws.next() => {
+                            match msg {
+                                Some(Ok(Message::Text(text))) => {
+                                    heartbeat.record_message_received().await;
+                                    if let Ok(update) = parse_book_update(&text, &mut seq_counter) {
+                                        if tx.send(update).await.is_err() {
+                                            info!("MEXC books stream receiver dropped");
+                                            break 'reconnect;
+                                        }
+                                    }
+                                }
+                                Some(Ok(Message::Ping(data))) => {
+                                    heartbeat.record_pong_received().await;
+                                    if ws.send(Message::Pong(data)).await.is_err() {
+                                        warn!("MEXC books failed to send pong");
+                                        break 'message_loop;
+                                    }
+                                    heartbeat.record_ping_sent().await;
+                                }
+                                Some(Ok(Message::Pong(_))) => {
+                                    heartbeat.record_pong_received().await;
+                                }
+                                Some(Ok(Message::Close(_))) => {
+                                    warn!("MEXC books WebSocket closed");
+                                    break 'message_loop;
+                                }
+                                Some(Err(e)) => {
+                                    error!("MEXC books WebSocket error: {}", e);
+                                    break 'message_loop;
+                                }
+                                None => {
+                                    warn!("MEXC books WebSocket stream ended");
+                                    break 'message_loop;
+                                }
+                                _ => {}
                             }
                         }
                     }
-                    Ok(Message::Ping(data)) => {
-                        let _ = write.send(Message::Pong(data)).await;
-                    }
-                    Ok(Message::Close(_)) => break,
-                    Err(_) => break,
-                    _ => {}
                 }
+
+                if !strategy.can_retry() {
+                    error!("MEXC books stream max reconnection attempts reached");
+                    break 'reconnect;
+                }
+
+                let delay = strategy.wait_before_retry().await;
+                warn!("MEXC books stream reconnecting - waiting {}ms", delay);
             }
+
+            info!("MEXC books stream task terminated");
         });
 
         Ok(rx)
@@ -1515,45 +1762,111 @@ impl SpotWs for MexcSpotAdapter {
         use futures_util::{SinkExt, StreamExt};
         use tokio_tungstenite::{connect_async, tungstenite::Message};
 
-        let (ws_stream, _) = connect_async(MEXC_SPOT_WS_URL)
-            .await
-            .context("Failed to connect to WebSocket")?;
-
-        let (mut write, mut read) = ws_stream.split();
         let (tx, rx) = mpsc::channel(1000);
+        let adapter = self.clone();
+        let symbols_owned: Vec<String> = symbols.iter().map(|s| s.to_string()).collect();
+        let mut shutdown_rx = adapter.shutdown_tx.lock().await.as_ref().unwrap().subscribe();
 
-        // Subscribe to trade streams for each symbol
-        for symbol in symbols {
-            let sub_msg = serde_json::json!({
-                "method": "SUBSCRIPTION",
-                "params": [format!("{}@trade", symbol.to_lowercase())]
-            });
-
-            write
-                .send(Message::Text(sub_msg.to_string()))
-                .await
-                .context("Failed to send subscription")?;
-        }
-
-        // Spawn background task to handle messages
         tokio::spawn(async move {
-            while let Some(msg) = read.next().await {
-                match msg {
-                    Ok(Message::Text(text)) => {
-                        if let Ok(event) = parse_trade_event(&text) {
-                            if tx.send(event).await.is_err() {
-                                break;
+            let reconnect_config = ReconnectConfig::production();
+            let mut strategy = ReconnectStrategy::new(reconnect_config);
+
+            'reconnect: loop {
+                let reconnect_num = adapter.reconnect_count.load(Ordering::Relaxed);
+                info!("MEXC Spot trades stream connecting (reconnect #{})", reconnect_num);
+
+                let mut ws = match connect_async(MEXC_SPOT_WS_URL).await {
+                    Ok((stream, _)) => stream,
+                    Err(e) => {
+                        error!("MEXC trades WebSocket connection failed: {}", e);
+                        if !strategy.can_retry() {
+                            break 'reconnect;
+                        }
+                        let delay = strategy.wait_before_retry().await;
+                        warn!("MEXC trades stream reconnecting - waiting {}ms", delay);
+                        continue 'reconnect;
+                    }
+                };
+
+                // Subscribe to all symbols
+                for symbol in &symbols_owned {
+                    let sub_msg = serde_json::json!({
+                        "method": "SUBSCRIPTION",
+                        "params": [format!("{}@trade", symbol.to_lowercase())]
+                    });
+                    if ws.send(Message::Text(sub_msg.to_string())).await.is_err() {
+                        warn!("Failed to subscribe to {}", symbol);
+                        continue 'reconnect;
+                    }
+                }
+
+                strategy.reset();
+                info!("MEXC Spot trades WebSocket connected (reconnect #{})", reconnect_num);
+
+                let heartbeat = HeartbeatMonitor::new(HeartbeatConfig::production());
+
+                'message_loop: loop {
+                    tokio::select! {
+                        _ = shutdown_rx.recv() => {
+                            info!("MEXC trades stream shutdown signal received");
+                            break 'reconnect;
+                        }
+                        _ = tokio::time::sleep(tokio::time::Duration::from_secs(5)) => {
+                            if !heartbeat.is_alive().await {
+                                warn!("MEXC trades stream heartbeat timeout");
+                                break 'message_loop;
+                            }
+                        }
+                        msg = ws.next() => {
+                            match msg {
+                                Some(Ok(Message::Text(text))) => {
+                                    heartbeat.record_message_received().await;
+                                    if let Ok(event) = parse_trade_event(&text) {
+                                        if tx.send(event).await.is_err() {
+                                            info!("MEXC trades stream receiver dropped");
+                                            break 'reconnect;
+                                        }
+                                    }
+                                }
+                                Some(Ok(Message::Ping(data))) => {
+                                    heartbeat.record_pong_received().await;
+                                    if ws.send(Message::Pong(data)).await.is_err() {
+                                        warn!("MEXC trades failed to send pong");
+                                        break 'message_loop;
+                                    }
+                                    heartbeat.record_ping_sent().await;
+                                }
+                                Some(Ok(Message::Pong(_))) => {
+                                    heartbeat.record_pong_received().await;
+                                }
+                                Some(Ok(Message::Close(_))) => {
+                                    warn!("MEXC trades WebSocket closed");
+                                    break 'message_loop;
+                                }
+                                Some(Err(e)) => {
+                                    error!("MEXC trades WebSocket error: {}", e);
+                                    break 'message_loop;
+                                }
+                                None => {
+                                    warn!("MEXC trades WebSocket stream ended");
+                                    break 'message_loop;
+                                }
+                                _ => {}
                             }
                         }
                     }
-                    Ok(Message::Ping(data)) => {
-                        let _ = write.send(Message::Pong(data)).await;
-                    }
-                    Ok(Message::Close(_)) => break,
-                    Err(_) => break,
-                    _ => {}
                 }
+
+                if !strategy.can_retry() {
+                    error!("MEXC trades stream max reconnection attempts reached");
+                    break 'reconnect;
+                }
+
+                let delay = strategy.wait_before_retry().await;
+                warn!("MEXC trades stream reconnecting - waiting {}ms", delay);
             }
+
+            info!("MEXC trades stream task terminated");
         });
 
         Ok(rx)
