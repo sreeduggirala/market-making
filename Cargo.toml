@@ -1,10 +1,9 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/models",
     "crates/adapters",
     "crates/oms",
-    "crates/risk",
+    "crates/inventory",
 ]
 
 [workspace.dependencies]
@@ -50,3 +49,26 @@ serde_urlencoded = "0.7"
 # Futures utilities
 futures-util = "0.3"
 
+# Environment variables
+dotenvy = "0.15"
+
+# Main binary for running strategies
+[package]
+name = "market-making"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+adapters = { path = "crates/adapters" }
+oms = { path = "crates/oms" }
+inventory = { path = "crates/inventory" }
+
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+dotenvy = { workspace = true }
+
+[[bin]]
+name = "test-core"
+path = "bin/test_core.rs"

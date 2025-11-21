@@ -1,5 +1,5 @@
 [package]
-name = "oms"
+name = "inventory"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -14,10 +14,12 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true }
+rust_decimal = { workspace = true }
 
 # Local dependencies
 adapters = { path = "../adapters" }
+oms = { path = "../oms" }
 
-# OMS-specific
-uuid = { version = "1.11", features = ["v4", "fast-rng"] }
+# Inventory-specific
 dashmap = "6.1"  # Concurrent HashMap
+uuid = { version = "1.11", features = ["v4", "fast-rng"] }
