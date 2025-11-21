@@ -24,8 +24,8 @@
 //! - κ = order arrival rate
 
 use crate::{MarketData, Strategy};
-use adapters::traits::{BookUpdate, NewOrder, OrderType, Side, TimeInForce};
-use anyhow::Result;
+use adapters::traits::{BookUpdate, NewOrder, OrderType, PerpWs, Side, SpotWs, TimeInForce};
+use anyhow::{anyhow, Result};
 use inventory::PositionManager;
 use oms::{Exchange, OrderManager};
 use std::collections::VecDeque;
@@ -170,12 +170,58 @@ impl StrategyState {
     }
 }
 
+/// Wrapper for spot adapters to provide a unified interface
+pub struct SpotAdapter {
+    inner: Arc<dyn SpotWs>,
+}
+
+impl SpotAdapter {
+    pub fn new(adapter: Arc<dyn SpotWs>) -> Self {
+        Self { inner: adapter }
+    }
+
+    pub async fn subscribe_books(&self, symbols: &[&str]) -> Result<tokio::sync::mpsc::Receiver<BookUpdate>> {
+        self.inner.subscribe_books(symbols).await
+    }
+}
+
+/// Wrapper for perp adapters to provide a unified interface
+pub struct PerpAdapter {
+    inner: Arc<dyn PerpWs>,
+}
+
+impl PerpAdapter {
+    pub fn new(adapter: Arc<dyn PerpWs>) -> Self {
+        Self { inner: adapter }
+    }
+
+    pub async fn subscribe_books(&self, symbols: &[&str]) -> Result<tokio::sync::mpsc::Receiver<BookUpdate>> {
+        self.inner.subscribe_books(symbols).await
+    }
+}
+
+/// Unified adapter type that can be either spot or perpetual
+pub enum Adapter {
+    Spot(SpotAdapter),
+    Perp(PerpAdapter),
+}
+
+impl Adapter {
+    pub async fn subscribe_books(&self, symbols: &[&str]) -> Result<tokio::sync::mpsc::Receiver<BookUpdate>> {
+        match self {
+            Adapter::Spot(adapter) => adapter.subscribe_books(symbols).await,
+            Adapter::Perp(adapter) => adapter.subscribe_books(symbols).await,
+        }
+    }
+}
+
 /// Avellaneda-Stoikov market making strategy
 pub struct AvellanedaStoikov {
     config: AvellanedaStoikovConfig,
     oms: Arc<OrderManager>,
     position_manager: Arc<PositionManager>,
     state: Arc<RwLock<StrategyState>>,
+    adapter: Arc<Adapter>,
 }
 
 impl AvellanedaStoikov {
@@ -184,6 +230,7 @@ impl AvellanedaStoikov {
         config: AvellanedaStoikovConfig,
         oms: Arc<OrderManager>,
         position_manager: Arc<PositionManager>,
+        adapter: Arc<Adapter>,
     ) -> Self {
         let state = StrategyState::new(config.volatility_window);
 
@@ -192,6 +239,7 @@ impl AvellanedaStoikov {
             oms,
             position_manager,
             state: Arc::new(RwLock::new(state)),
+            adapter,
         }
     }
 
@@ -375,6 +423,59 @@ impl AvellanedaStoikov {
         Ok(())
     }
 
+    /// Converts a BookUpdate to MarketData
+    fn book_update_to_market_data(update: BookUpdate) -> Option<MarketData> {
+        match update {
+            BookUpdate::TopOfBook {
+                symbol,
+                bid_px,
+                bid_sz,
+                ask_px,
+                ask_sz,
+                ex_ts_ms,
+                recv_ms: _,
+            } => {
+                let mid_price = (bid_px + ask_px) / 2.0;
+                Some(MarketData {
+                    symbol,
+                    bid_price: bid_px,
+                    ask_price: ask_px,
+                    mid_price,
+                    bid_size: bid_sz,
+                    ask_size: ask_sz,
+                    timestamp_ms: ex_ts_ms,
+                })
+            }
+            BookUpdate::DepthDelta {
+                symbol,
+                bids,
+                asks,
+                ex_ts_ms,
+                ..
+            } => {
+                // Extract best bid and ask from depth data
+                let best_bid = bids.first().copied();
+                let best_ask = asks.first().copied();
+
+                match (best_bid, best_ask) {
+                    (Some((bid_px, bid_sz)), Some((ask_px, ask_sz))) => {
+                        let mid_price = (bid_px + ask_px) / 2.0;
+                        Some(MarketData {
+                            symbol,
+                            bid_price: bid_px,
+                            ask_price: ask_px,
+                            mid_price,
+                            bid_size: bid_sz,
+                            ask_size: ask_sz,
+                            timestamp_ms: ex_ts_ms,
+                        })
+                    }
+                    _ => None,
+                }
+            }
+        }
+    }
+
     /// Processes a market data update
     pub async fn on_market_data(&self, market_data: MarketData) -> Result<()> {
         if let Some((bid, ask)) = self.calculate_quotes(&market_data).await {
@@ -412,16 +513,60 @@ impl Strategy for AvellanedaStoikov {
     async fn run(&self) -> Result<()> {
         info!("Starting Avellaneda-Stoikov main loop");
 
-        // This is a simplified version - in reality you'd subscribe to market data
-        // For now, we'll use a timer-based approach
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(
+        // Subscribe to book updates for this symbol
+        let mut book_rx = self
+            .adapter
+            .subscribe_books(&[&self.config.symbol])
+            .await
+            .map_err(|e| anyhow!("Failed to subscribe to books: {}", e))?;
+
+        info!(
+            symbol = %self.config.symbol,
+            "Subscribed to book updates - strategy is live"
+        );
+
+        // Set up quote refresh timer
+        let mut refresh_interval = tokio::time::interval(tokio::time::Duration::from_millis(
             self.config.quote_refresh_interval_ms,
         ));
 
-        loop {
-            interval.tick().await;
+        // Track last market data for periodic refresh
+        let mut last_market_data: Option<MarketData> = None;
 
-            debug!("Avellaneda-Stoikov tick (waiting for market data integration)");
+        loop {
+            tokio::select! {
+                // Process incoming book updates
+                Some(book_update) = book_rx.recv() => {
+                    if let Some(market_data) = Self::book_update_to_market_data(book_update) {
+                        // Only process updates for our symbol
+                        if market_data.symbol == self.config.symbol {
+                            debug!(
+                                mid = market_data.mid_price,
+                                spread_bps = market_data.spread_bps(),
+                                "Received book update"
+                            );
+
+                            // Process the market data update
+                            if let Err(e) = self.on_market_data(market_data.clone()).await {
+                                warn!(error = %e, "Failed to process market data");
+                            }
+
+                            // Store for periodic refresh
+                            last_market_data = Some(market_data);
+                        }
+                    }
+                }
+
+                // Periodic quote refresh (in case we haven't received updates)
+                _ = refresh_interval.tick() => {
+                    if let Some(ref market_data) = last_market_data {
+                        debug!("Periodic quote refresh");
+                        if let Err(e) = self.on_market_data(market_data.clone()).await {
+                            warn!(error = %e, "Failed to refresh quotes");
+                        }
+                    }
+                }
+            }
         }
     }
 
