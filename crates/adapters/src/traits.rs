@@ -219,6 +219,8 @@ pub enum PositionSide {
 
 #[derive(Clone, Debug)]
 pub struct Position {
+    /// Source exchange for this position
+    pub exchange: Option<String>,
     pub symbol: String,
     pub qty: Quantity, // signed: >0 long, <0 short
     pub entry_px: Price,

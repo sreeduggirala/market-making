@@ -759,6 +759,7 @@ impl PerpRest for MexcPerpsAdapter {
                 }
 
                 Position {
+                    exchange: Some("mexc".to_string()),
                     symbol: data.symbol,
                     qty,
                     entry_px: data.hold_avg_price.parse().unwrap_or(0.0),
@@ -1826,6 +1827,7 @@ fn parse_futures_user_event(text: &str) -> Result<UserEvent> {
                     }
 
                     return Ok(UserEvent::Position(Position {
+                        exchange: Some("mexc".to_string()),
                         symbol: pos_data.symbol,
                         qty,
                         entry_px: pos_data.hold_avg_price.parse().unwrap_or(0.0),

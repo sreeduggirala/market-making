@@ -23,15 +23,24 @@ pub struct OrderBook {
 
     /// Index by symbol: symbol -> Vec<client_order_id>
     by_symbol: Arc<DashMap<String, Vec<String>>>,
+
+    /// Maximum age for completed orders in milliseconds (default: 24 hours)
+    max_order_age_ms: u64,
 }
 
 impl OrderBook {
-    /// Creates a new empty order book
+    /// Creates a new empty order book with default 24-hour retention
     pub fn new() -> Self {
+        Self::with_retention(24 * 60 * 60 * 1000) // 24 hours in ms
+    }
+
+    /// Creates a new order book with custom retention period
+    pub fn with_retention(max_age_ms: u64) -> Self {
         Self {
             by_client_id: Arc::new(DashMap::new()),
             by_venue_id: Arc::new(DashMap::new()),
             by_symbol: Arc::new(DashMap::new()),
+            max_order_age_ms: max_age_ms,
         }
     }
 
@@ -194,6 +203,64 @@ impl OrderBook {
         }
 
         stats
+    }
+
+    /// Cleans up old completed orders to prevent memory leak
+    ///
+    /// Removes orders that are:
+    /// - Filled, Canceled, Rejected, or Expired
+    /// - Updated more than max_order_age_ms ago
+    ///
+    /// Returns the number of orders removed
+    pub fn cleanup_old_orders(&self) -> usize {
+        let cutoff = crate::now_ms() - self.max_order_age_ms;
+        let mut removed_count = 0;
+
+        // Collect client IDs to remove (can't modify while iterating)
+        let to_remove: Vec<String> = self
+            .by_client_id
+            .iter()
+            .filter_map(|entry| {
+                let order = entry.value();
+                let is_completed = matches!(
+                    order.status,
+                    OrderStatus::Filled
+                        | OrderStatus::Canceled
+                        | OrderStatus::Rejected
+                        | OrderStatus::Expired
+                );
+
+                if is_completed && order.updated_ms < cutoff {
+                    Some(entry.key().clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Remove old orders
+        for client_id in to_remove {
+            if let Some((_, order)) = self.by_client_id.remove(&client_id) {
+                // Clean up secondary indexes
+                self.by_venue_id.remove(&order.venue_order_id);
+
+                if let Some(mut ids) = self.by_symbol.get_mut(&order.symbol) {
+                    ids.retain(|id| id != &client_id);
+                }
+
+                removed_count += 1;
+            }
+        }
+
+        if removed_count > 0 {
+            debug!(
+                removed = removed_count,
+                cutoff_age_hours = self.max_order_age_ms / (60 * 60 * 1000),
+                "Cleaned up old orders"
+            );
+        }
+
+        removed_count
     }
 }
 

@@ -31,11 +31,34 @@ impl OrderManager {
         let event_processor = Arc::new(EventProcessor::new(order_book.clone()));
         let router = Arc::new(RwLock::new(OrderRouter::new(order_book.clone())));
 
-        Self {
+        let manager = Self {
             order_book,
             event_processor,
             router,
-        }
+        };
+
+        // Start periodic cleanup task
+        manager.start_cleanup_task();
+
+        manager
+    }
+
+    /// Starts a background task to periodically clean up old orders
+    fn start_cleanup_task(&self) {
+        let order_book = self.order_book.clone();
+
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3600)); // Every hour
+
+            loop {
+                interval.tick().await;
+
+                let removed = order_book.cleanup_old_orders();
+                if removed > 0 {
+                    info!(removed, "Periodic cleanup removed old orders");
+                }
+            }
+        });
     }
 
     /// Registers an exchange adapter and starts processing its user event stream

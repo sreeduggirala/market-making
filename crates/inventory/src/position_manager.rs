@@ -97,6 +97,7 @@ impl PositionManager {
             .or_insert_with(|| {
                 // Create new position if doesn't exist
                 let position = Position {
+                    exchange: Some(exchange.to_string()),
                     symbol: fill.symbol.clone(),
                     qty: 0.0, // Will be updated by exchange
                     entry_px: fill.price,
@@ -276,6 +277,7 @@ mod tests {
         let manager = PositionManager::new();
 
         let position = Position {
+            exchange: Some("kraken".to_string()),
             symbol: "BTCUSD".to_string(),
             qty: 1.0,
             entry_px: 50000.0,
@@ -304,6 +306,7 @@ mod tests {
         manager.update_position(
             Exchange::Kraken,
             Position {
+                exchange: Some("kraken".to_string()),
                 symbol: "BTCUSD".to_string(),
                 qty: 1.0,
                 entry_px: 50000.0,
@@ -322,6 +325,7 @@ mod tests {
         manager.update_position(
             Exchange::Mexc,
             Position {
+                exchange: Some("mexc".to_string()),
                 symbol: "BTCUSD".to_string(),
                 qty: -0.5,
                 entry_px: 51000.0,
