@@ -17,14 +17,16 @@
 //!   KRAKEN_API_SECRET  - Kraken API secret
 
 use adapters::kraken::spot::KrakenSpotAdapter;
+use adapters::mexc::spot::MexcSpotAdapter;
 use adapters::traits::SpotWs;
 use anyhow::Result;
 use inventory::PositionManager;
 use oms::{Exchange, OrderManager};
 use std::sync::Arc;
 use strategies::avellaneda_stoikov::{Adapter, AvellanedaStoikov, AvellanedaStoikovConfig, SpotAdapter};
-use strategies::Strategy;
-use tracing::{error, info};
+use strategies::{load_avellaneda_config, Strategy};
+use tokio::sync::broadcast;
+use tracing::{error, info, warn};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -44,86 +46,196 @@ async fn main() -> Result<()> {
     // 1. Load Configuration
     // =================================================================
 
-    let kraken_key = std::env::var("KRAKEN_API_KEY")
-        .expect("KRAKEN_API_KEY environment variable not set");
-    let kraken_secret = std::env::var("KRAKEN_API_SECRET")
-        .expect("KRAKEN_API_SECRET environment variable not set");
+    // Try to load from config file, fall back to defaults
+    let config_path = std::env::var("CONFIG_PATH")
+        .unwrap_or_else(|_| "config/avellaneda_stoikov.toml".to_string());
 
-    // Strategy configuration
-    let config = AvellanedaStoikovConfig {
-        exchange: Exchange::Kraken,
-        symbol: "XBT/USD".to_string(),     // Kraken Spot BTC/USD
-        risk_aversion: 0.1,                // Moderate risk aversion
-        time_horizon_secs: 180.0,          // 3 minute horizon
-        order_size: 0.001,                 // 0.001 BTC per order (~$100 at $100k)
-        min_spread_bps: 5.0,               // Minimum 5 bps (0.05%)
-        max_spread_bps: 100.0,             // Maximum 100 bps (1%)
-        volatility_window: 100,            // 100 samples for volatility
-        quote_refresh_interval_ms: 5000,   // Refresh every 5 seconds
-        order_arrival_rate: 1.0,           // Expect ~1 fill per second
-        max_inventory: 0.01,               // Max 0.01 BTC position
-        min_order_size: 0.001,             // Exchange minimum
+    let config = if std::path::Path::new(&config_path).exists() {
+        info!("Loading configuration from: {}", config_path);
+        load_avellaneda_config(&config_path)?
+    } else {
+        info!("Config file not found, using defaults");
+        AvellanedaStoikovConfig {
+            exchange: Exchange::Kraken,
+            symbol: "XBT/USD".to_string(),
+            risk_aversion: 0.1,
+            time_horizon_secs: 180.0,
+            order_size: 0.001,
+            min_spread_bps: 5.0,
+            max_spread_bps: 100.0,
+            volatility_window: 100,
+            quote_refresh_interval_ms: 5000,
+            order_arrival_rate: 1.0,
+            max_inventory: 0.01,
+            min_order_size: 0.001,
+        }
     };
 
     info!(
         exchange = ?config.exchange,
         symbol = %config.symbol,
         risk_aversion = config.risk_aversion,
+        order_size = config.order_size,
+        max_inventory = config.max_inventory,
         "Configuration loaded"
     );
+
+    // Load API credentials based on exchange
+    let (api_key, api_secret) = match config.exchange {
+        Exchange::Kraken => (
+            std::env::var("KRAKEN_API_KEY")
+                .expect("KRAKEN_API_KEY environment variable not set"),
+            std::env::var("KRAKEN_API_SECRET")
+                .expect("KRAKEN_API_SECRET environment variable not set"),
+        ),
+        Exchange::Mexc => (
+            std::env::var("MEXC_API_KEY")
+                .expect("MEXC_API_KEY environment variable not set"),
+            std::env::var("MEXC_API_SECRET")
+                .expect("MEXC_API_SECRET environment variable not set"),
+        ),
+    };
 
     // =================================================================
     // 2. Initialize Exchange Adapter
     // =================================================================
 
-    info!("📡 Connecting to Kraken Spot...");
+    info!("📡 Connecting to {}...", config.exchange);
 
-    let kraken_spot = Arc::new(KrakenSpotAdapter::new(kraken_key, kraken_secret));
+    // Create exchange-specific adapter and register with OMS
+    // We need to handle each exchange type separately due to type constraints
+    enum ExchangeAdapterHandle {
+        Kraken(Arc<KrakenSpotAdapter>),
+        Mexc(Arc<MexcSpotAdapter>),
+    }
 
-    // Wrap in unified adapter interface
-    let adapter = Arc::new(Adapter::Spot(SpotAdapter::new(
-        kraken_spot.clone() as Arc<dyn SpotWs>
-    )));
+    let (adapter, oms, adapter_handle) = match config.exchange {
+        Exchange::Kraken => {
+            let kraken = Arc::new(KrakenSpotAdapter::new(api_key, api_secret));
+
+            // Create OMS and register adapter
+            let oms = Arc::new(OrderManager::new());
+            let user_stream = kraken.subscribe_user().await?;
+            oms.register_exchange(Exchange::Kraken, kraken.clone(), user_stream).await;
+
+            // Create unified adapter for strategy
+            let adapter = Arc::new(Adapter::Spot(SpotAdapter::new(kraken.clone() as Arc<dyn SpotWs>)));
+
+            (adapter, oms, ExchangeAdapterHandle::Kraken(kraken))
+        }
+        Exchange::Mexc => {
+            let mexc = Arc::new(MexcSpotAdapter::new(api_key, api_secret));
+
+            // Create OMS and register adapter
+            let oms = Arc::new(OrderManager::new());
+            let user_stream = mexc.subscribe_user().await?;
+            oms.register_exchange(Exchange::Mexc, mexc.clone(), user_stream).await;
+
+            // Create unified adapter for strategy
+            let adapter = Arc::new(Adapter::Spot(SpotAdapter::new(mexc.clone() as Arc<dyn SpotWs>)));
+
+            (adapter, oms, ExchangeAdapterHandle::Mexc(mexc))
+        }
+    };
 
     info!("✅ Exchange adapter initialized");
-
-    // =================================================================
-    // 3. Initialize Order Management System
-    // =================================================================
-
-    info!("⚙️  Initializing OMS...");
-
-    let oms = Arc::new(OrderManager::new());
-
-    // Register Kraken Spot
-    let user_stream = kraken_spot.subscribe_user().await?;
-    oms.register_exchange(Exchange::Kraken, kraken_spot.clone(), user_stream)
-        .await;
-
     info!("✅ OMS initialized");
 
     // =================================================================
-    // 4. Initialize Position Manager
+    // 4. Setup Shutdown Channel (needed for event handlers)
+    // =================================================================
+
+    let (shutdown_tx, _shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
+
+    // Handle Ctrl+C
+    let shutdown_tx_clone = shutdown_tx.clone();
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.unwrap();
+        info!("🛑 Shutdown signal received (Ctrl+C)");
+        let _ = shutdown_tx_clone.send(());
+    });
+
+    // =================================================================
+    // 5. Initialize Position Manager
     // =================================================================
 
     info!("📊 Initializing position manager...");
 
     let position_manager = Arc::new(PositionManager::new());
 
-    // Listen to fills from OMS and update position manager
+    // Subscribe to fills from OMS and update position manager
     let mut fill_rx = oms.subscribe_fills();
-    let pm = position_manager.clone();
-    let config_exchange = config.exchange;
-    tokio::spawn(async move {
-        while let Ok(fill) = fill_rx.recv().await {
-            pm.update_from_fill(config_exchange, &fill);
+    let pm_fill = position_manager.clone();
+    let fill_exchange = config.exchange;
+    let fill_shutdown = shutdown_tx.subscribe();
+    let fill_handle = tokio::spawn(async move {
+        let mut shutdown_rx = fill_shutdown;
+        loop {
+            tokio::select! {
+                result = fill_rx.recv() => {
+                    match result {
+                        Ok(fill) => {
+                            info!(
+                                symbol = %fill.symbol,
+                                qty = fill.qty,
+                                price = fill.price,
+                                "Fill received"
+                            );
+                            pm_fill.update_from_fill(fill_exchange, &fill);
+                        }
+                        Err(broadcast::error::RecvError::Closed) => break,
+                        Err(broadcast::error::RecvError::Lagged(n)) => {
+                            warn!("Fill receiver lagged by {} messages", n);
+                        }
+                    }
+                }
+                _ = shutdown_rx.recv() => {
+                    info!("Fill handler shutting down");
+                    break;
+                }
+            }
+        }
+    });
+
+    // Subscribe to position updates from OMS and update position manager
+    let mut position_rx = oms.subscribe_positions();
+    let pm_pos = position_manager.clone();
+    let pos_exchange = config.exchange;
+    let pos_shutdown = shutdown_tx.subscribe();
+    let position_handle = tokio::spawn(async move {
+        let mut shutdown_rx = pos_shutdown;
+        loop {
+            tokio::select! {
+                result = position_rx.recv() => {
+                    match result {
+                        Ok(position) => {
+                            info!(
+                                symbol = %position.symbol,
+                                qty = position.qty,
+                                entry_px = position.entry_px,
+                                unrealized_pnl = ?position.unrealized_pnl,
+                                "Position update received"
+                            );
+                            pm_pos.update_position(pos_exchange, position);
+                        }
+                        Err(broadcast::error::RecvError::Closed) => break,
+                        Err(broadcast::error::RecvError::Lagged(n)) => {
+                            warn!("Position receiver lagged by {} messages", n);
+                        }
+                    }
+                }
+                _ = shutdown_rx.recv() => {
+                    info!("Position handler shutting down");
+                    break;
+                }
+            }
         }
     });
 
     info!("✅ Position manager initialized");
 
     // =================================================================
-    // 5. Initialize Avellaneda-Stoikov Strategy
+    // 6. Initialize Avellaneda-Stoikov Strategy
     // =================================================================
 
     info!("💹 Initializing Avellaneda-Stoikov strategy...");
@@ -141,22 +253,10 @@ async fn main() -> Result<()> {
     info!("✅ Strategy initialized");
 
     // =================================================================
-    // 6. Setup Graceful Shutdown
-    // =================================================================
-
-    let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
-
-    // Handle Ctrl+C
-    let shutdown_tx_clone = shutdown_tx.clone();
-    tokio::spawn(async move {
-        tokio::signal::ctrl_c().await.unwrap();
-        info!("🛑 Shutdown signal received (Ctrl+C)");
-        let _ = shutdown_tx_clone.send(());
-    });
-
-    // =================================================================
     // 7. Run Strategy
     // =================================================================
+
+    let mut shutdown_rx = shutdown_tx.subscribe();
 
     info!("🎯 Starting market making...");
     info!("📈 Trading {} on {}", config.symbol, "Kraken Spot");
@@ -233,19 +333,37 @@ async fn main() -> Result<()> {
     // 8. Cleanup
     // =================================================================
 
-    // Stop tasks
-    strategy_handle.abort();
-    stats_handle.abort();
-
-    // Shutdown strategy (cancels all orders)
+    // First, cancel all orders (most important for safety)
     info!("❌ Canceling all orders...");
     if let Err(e) = strategy.shutdown().await {
         error!("Error during strategy shutdown: {}", e);
     }
 
-    // Shutdown adapter
+    // Wait for event handlers to drain (they'll receive shutdown signal)
+    info!("⏳ Waiting for event handlers to complete...");
+    let drain_timeout = tokio::time::Duration::from_secs(5);
+
+    // Wait for fill handler
+    let _ = tokio::time::timeout(drain_timeout, fill_handle).await;
+
+    // Wait for position handler
+    let _ = tokio::time::timeout(drain_timeout, position_handle).await;
+
+    // Wait for strategy and stats tasks
+    let _ = tokio::time::timeout(drain_timeout, strategy_handle).await;
+    let _ = tokio::time::timeout(drain_timeout, stats_handle).await;
+
+    info!("✅ Event handlers stopped");
+
+    // Shutdown adapter (closes WebSocket connections)
     info!("🔌 Disconnecting from exchange...");
-    kraken_spot.shutdown().await;
+    match adapter_handle {
+        ExchangeAdapterHandle::Kraken(kraken) => kraken.shutdown().await,
+        ExchangeAdapterHandle::Mexc(mexc) => mexc.shutdown().await,
+    }
+
+    // Give WebSocket a moment to close cleanly
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
     info!("✅ Shutdown complete");
     info!("👋 Goodbye!");

@@ -1,0 +1,52 @@
+# Avellaneda-Stoikov Market Making Strategy Configuration
+#
+# This file contains all configurable parameters for the trading strategy.
+# Environment variables can override these values by setting:
+#   STRATEGY_<SECTION>_<KEY>=value (e.g., STRATEGY_TRADING_SYMBOL=ETH/USD)
+
+[trading]
+# Exchange to trade on: "kraken" or "mexc"
+exchange = "kraken"
+
+# Trading symbol (exchange-specific format)
+symbol = "XBT/USD"
+
+# Order size per quote (in base currency)
+order_size = 0.001
+
+# Minimum order size (exchange minimum)
+min_order_size = 0.0001
+
+[strategy]
+# Risk aversion parameter (gamma) - higher = wider spreads
+# Range: 0.01 to 1.0, typical: 0.1
+risk_aversion = 0.1
+
+# Time horizon in seconds - how far ahead to optimize
+# Shorter = more responsive, Longer = more stable
+time_horizon_secs = 180.0
+
+# Number of price samples for volatility calculation
+volatility_window = 100
+
+# Expected order arrival rate (fills per second)
+# Lower = wider spreads
+order_arrival_rate = 1.0
+
+[spreads]
+# Minimum spread in basis points (0.01% = 1 bps)
+min_spread_bps = 5.0
+
+# Maximum spread in basis points
+max_spread_bps = 100.0
+
+[risk]
+# Maximum inventory (absolute position limit in base currency)
+max_inventory = 0.01
+
+[timing]
+# Quote refresh interval in milliseconds
+quote_refresh_interval_ms = 5000
+
+# Stats logging interval in seconds
+stats_interval_secs = 10

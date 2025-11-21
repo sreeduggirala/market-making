@@ -7,6 +7,11 @@
 //! - Market data (via adapters or data feeds)
 
 pub mod avellaneda_stoikov;
+pub mod config;
+pub mod metrics;
+
+pub use config::load_avellaneda_config;
+pub use metrics::StrategyMetrics;
 
 use anyhow::Result;
 

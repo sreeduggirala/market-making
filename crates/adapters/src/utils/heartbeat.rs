@@ -248,6 +248,7 @@ impl Clone for HeartbeatMonitor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::time::sleep;
 
     #[tokio::test]
     async fn test_heartbeat_monitor_healthy() {

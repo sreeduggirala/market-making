@@ -1442,7 +1442,10 @@ impl PerpWs for MexcPerpsAdapter {
                 let heartbeat = HeartbeatMonitor::new(HeartbeatConfig::production());
 
                 // Start listen key renewal task
-                let renewal_shutdown_rx = adapter.shutdown_tx.lock().await.as_ref().unwrap().subscribe();
+                let renewal_shutdown_rx = match adapter.shutdown_tx.lock().await.as_ref() {
+                    Some(tx) => tx.subscribe(),
+                    None => continue 'reconnect, // Skip renewal if no shutdown channel
+                };
                 Self::spawn_listen_key_renewal_task(
                     adapter.listen_key.clone(),
                     adapter.client.clone(),
@@ -1525,7 +1528,15 @@ impl PerpWs for MexcPerpsAdapter {
         let (tx, rx) = mpsc::channel(1000);
         let adapter = self.clone();
         let symbols_owned: Vec<String> = symbols.iter().map(|s| s.to_string()).collect();
-        let mut shutdown_rx = adapter.shutdown_tx.lock().await.as_ref().unwrap().subscribe();
+        let mut shutdown_rx = match adapter.shutdown_tx.lock().await.as_ref() {
+            Some(tx) => tx.subscribe(),
+            None => {
+                // Create a dummy receiver that never fires
+                let (tx, rx) = tokio::sync::broadcast::channel(1);
+                drop(tx);
+                rx
+            }
+        };
 
         tokio::spawn(async move {
             let reconnect_config = ReconnectConfig::production();
@@ -1640,7 +1651,15 @@ impl PerpWs for MexcPerpsAdapter {
         let (tx, rx) = mpsc::channel(1000);
         let adapter = self.clone();
         let symbols_owned: Vec<String> = symbols.iter().map(|s| s.to_string()).collect();
-        let mut shutdown_rx = adapter.shutdown_tx.lock().await.as_ref().unwrap().subscribe();
+        let mut shutdown_rx = match adapter.shutdown_tx.lock().await.as_ref() {
+            Some(tx) => tx.subscribe(),
+            None => {
+                // Create a dummy receiver that never fires
+                let (tx, rx) = tokio::sync::broadcast::channel(1);
+                drop(tx);
+                rx
+            }
+        };
 
         tokio::spawn(async move {
             let reconnect_config = ReconnectConfig::production();
