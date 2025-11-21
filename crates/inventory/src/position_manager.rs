@@ -5,7 +5,7 @@
 //! - PnL tracking
 //! - Position aggregation across venues
 
-use crate::{now_ms, PositionKey, Result};
+use crate::{now_ms, PositionKey};
 use adapters::traits::{Fill, Position};
 use dashmap::DashMap;
 use oms::Exchange;

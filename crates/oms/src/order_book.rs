@@ -8,9 +8,8 @@
 
 use adapters::traits::{Order, OrderStatus};
 use dashmap::DashMap;
-use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, warn};
+use tracing::debug;
 
 /// Thread-safe order book with multiple indexes
 #[derive(Clone)]

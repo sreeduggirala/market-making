@@ -475,8 +475,11 @@ impl SpotRest for MexcSpotAdapter {
         }
 
         let response: CreateOrderResponse = self
-            .client
-            .post_private("/api/v3/order", params_map)
+            .call_api("/api/v3/order", || async {
+                self.client
+                    .post_private("/api/v3/order", params_map.clone())
+                    .await
+            })
             .await
             .context("Failed to create order")?;
 
@@ -527,8 +530,11 @@ impl SpotRest for MexcSpotAdapter {
         params.insert("orderId".to_string(), venue_order_id.to_string());
 
         let _: serde_json::Value = self
-            .client
-            .delete_private("/api/v3/order", params)
+            .call_api("/api/v3/order", || async {
+                self.client
+                    .delete_private("/api/v3/order", params.clone())
+                    .await
+            })
             .await
             .context("Failed to cancel order")?;
 
@@ -559,8 +565,11 @@ impl SpotRest for MexcSpotAdapter {
         }
 
         let _: serde_json::Value = self
-            .client
-            .delete_private("/api/v3/openOrders", params)
+            .call_api("/api/v3/openOrders", || async {
+                self.client
+                    .delete_private("/api/v3/openOrders", params.clone())
+                    .await
+            })
             .await
             .context("Failed to cancel all orders")?;
 
@@ -604,8 +613,11 @@ impl SpotRest for MexcSpotAdapter {
         params.insert("orderId".to_string(), venue_order_id.to_string());
 
         let response: OrderResponse = self
-            .client
-            .get_private("/api/v3/order", params)
+            .call_api("/api/v3/order", || async {
+                self.client
+                    .get_private("/api/v3/order", params.clone())
+                    .await
+            })
             .await
             .context("Failed to get order")?;
 
@@ -674,8 +686,11 @@ impl SpotRest for MexcSpotAdapter {
         }
 
         let response: Vec<OrderResponse> = self
-            .client
-            .get_private("/api/v3/openOrders", params)
+            .call_api("/api/v3/openOrders", || async {
+                self.client
+                    .get_private("/api/v3/openOrders", params.clone())
+                    .await
+            })
             .await
             .context("Failed to get open orders")?;
 
@@ -829,8 +844,11 @@ impl SpotRest for MexcSpotAdapter {
         params.insert("batchOrders".to_string(), orders_json);
 
         let response: BatchOrderResponse = self
-            .client
-            .post_private("/api/v3/batchOrders", params)
+            .call_api("/api/v3/batchOrders", || async {
+                self.client
+                    .post_private("/api/v3/batchOrders", params.clone())
+                    .await
+            })
             .await
             .context("Failed to create batch orders")?;
 
@@ -925,8 +943,11 @@ impl SpotRest for MexcSpotAdapter {
 
         let params = HashMap::new();
         let response: AccountResponse = self
-            .client
-            .get_private("/api/v3/account", params)
+            .call_api("/api/v3/account", || async {
+                self.client
+                    .get_private("/api/v3/account", params.clone())
+                    .await
+            })
             .await
             .context("Failed to get balances")?;
 
@@ -977,8 +998,11 @@ impl SpotRest for MexcSpotAdapter {
 
         let params = HashMap::new();
         let response: AccountResponse = self
-            .client
-            .get_private("/api/v3/account", params)
+            .call_api("/api/v3/account", || async {
+                self.client
+                    .get_private("/api/v3/account", params.clone())
+                    .await
+            })
             .await
             .context("Failed to get account info")?;
 
@@ -1058,8 +1082,11 @@ impl SpotRest for MexcSpotAdapter {
         params.insert("symbol".to_string(), symbol.to_string());
 
         let response: ExchangeInfoResponse = self
-            .client
-            .get_public("/api/v3/exchangeInfo", Some(params))
+            .call_api("/api/v3/exchangeInfo", || async {
+                self.client
+                    .get_public("/api/v3/exchangeInfo", Some(params.clone()))
+                    .await
+            })
             .await
             .context("Failed to get market info")?;
 
@@ -1155,8 +1182,11 @@ impl SpotRest for MexcSpotAdapter {
 
         let params = HashMap::new();
         let response: ExchangeInfoResponse = self
-            .client
-            .get_public("/api/v3/exchangeInfo", Some(params))
+            .call_api("/api/v3/exchangeInfo", || async {
+                self.client
+                    .get_public("/api/v3/exchangeInfo", Some(params.clone()))
+                    .await
+            })
             .await
             .context("Failed to get all markets")?;
 
@@ -1245,8 +1275,11 @@ impl SpotRest for MexcSpotAdapter {
         params.insert("symbol".to_string(), symbol.to_string());
 
         let response: TickerResponse = self
-            .client
-            .get_public("/api/v3/ticker/24hr", Some(params))
+            .call_api("/api/v3/ticker/24hr", || async {
+                self.client
+                    .get_public("/api/v3/ticker/24hr", Some(params.clone()))
+                    .await
+            })
             .await
             .context("Failed to get ticker")?;
 
@@ -1300,8 +1333,11 @@ impl SpotRest for MexcSpotAdapter {
 
         let params = HashMap::new();
         let response: Vec<TickerResponse> = self
-            .client
-            .get_public("/api/v3/ticker/24hr", Some(params))
+            .call_api("/api/v3/ticker/24hr", || async {
+                self.client
+                    .get_public("/api/v3/ticker/24hr", Some(params.clone()))
+                    .await
+            })
             .await
             .context("Failed to get tickers")?;
 
@@ -1391,8 +1427,11 @@ impl SpotRest for MexcSpotAdapter {
         }
 
         let response: Vec<KlineData> = self
-            .client
-            .get_public("/api/v3/klines", Some(params))
+            .call_api("/api/v3/klines", || async {
+                self.client
+                    .get_public("/api/v3/klines", Some(params.clone()))
+                    .await
+            })
             .await
             .context("Failed to get klines")?;
 

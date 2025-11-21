@@ -963,6 +963,7 @@ dependencies = [
  "dotenvy",
  "inventory",
  "oms",
+ "strategies",
  "tokio",
  "tracing",
  "tracing-subscriber",

@@ -6,7 +6,7 @@
 //! - Adapter selection
 //! - Error handling and retries
 
-use crate::{now_ms, order_book::OrderBook, Exchange, OmsError, Result};
+use crate::{order_book::OrderBook, Exchange, OmsError, Result};
 use adapters::traits::{NewOrder, Order, SpotRest};
 use std::collections::HashMap;
 use std::sync::Arc;

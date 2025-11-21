@@ -368,8 +368,11 @@ impl PerpRest for MexcPerpsAdapter {
         }
 
         let response: OrderResponse = self
-            .client
-            .post_private("/api/v1/private/order/submit", params_map)
+            .call_api("/api/v1/private/order/submit", || async {
+                self.client
+                    .post_private("/api/v1/private/order/submit", params_map.clone())
+                    .await
+            })
             .await
             .context("Failed to create order")?;
 
@@ -405,8 +408,11 @@ impl PerpRest for MexcPerpsAdapter {
         params.insert("orderId".to_string(), venue_order_id.to_string());
 
         let _: serde_json::Value = self
-            .client
-            .post_private("/api/v1/private/order/cancel", params)
+            .call_api("/api/v1/private/order/cancel", || async {
+                self.client
+                    .post_private("/api/v1/private/order/cancel", params.clone())
+                    .await
+            })
             .await
             .context("Failed to cancel order")?;
 
@@ -422,8 +428,11 @@ impl PerpRest for MexcPerpsAdapter {
         }
 
         let _: serde_json::Value = self
-            .client
-            .post_private("/api/v1/private/order/cancel_all", params)
+            .call_api("/api/v1/private/order/cancel_all", || async {
+                self.client
+                    .post_private("/api/v1/private/order/cancel_all", params.clone())
+                    .await
+            })
             .await
             .context("Failed to cancel all orders")?;
 
@@ -461,8 +470,11 @@ impl PerpRest for MexcPerpsAdapter {
         params.insert("order_id".to_string(), venue_order_id.to_string());
 
         let response: GetOrderResponse = self
-            .client
-            .get_private("/api/v1/private/order/get", params)
+            .call_api("/api/v1/private/order/get", || async {
+                self.client
+                    .get_private("/api/v1/private/order/get", params.clone())
+                    .await
+            })
             .await
             .context("Failed to get order")?;
 
@@ -544,8 +556,11 @@ impl PerpRest for MexcPerpsAdapter {
         }
 
         let response: GetOrdersResponse = self
-            .client
-            .get_private("/api/v1/private/order/list/open_orders", params)
+            .call_api("/api/v1/private/order/list/open_orders", || async {
+                self.client
+                    .get_private("/api/v1/private/order/list/open_orders", params.clone())
+                    .await
+            })
             .await
             .context("Failed to get open orders")?;
 
@@ -671,8 +686,11 @@ impl PerpRest for MexcPerpsAdapter {
         params.insert("openType".to_string(), "2".to_string());
 
         let _: serde_json::Value = self
-            .client
-            .post_private("/api/v1/private/position/change_leverage", params)
+            .call_api("/api/v1/private/position/change_leverage", || async {
+                self.client
+                    .post_private("/api/v1/private/position/change_leverage", params.clone())
+                    .await
+            })
             .await
             .context("Failed to set leverage")?;
 
@@ -694,8 +712,11 @@ impl PerpRest for MexcPerpsAdapter {
         );
 
         let _: serde_json::Value = self
-            .client
-            .post_private("/api/v1/private/position/change_margin_type", params)
+            .call_api("/api/v1/private/position/change_margin_type", || async {
+                self.client
+                    .post_private("/api/v1/private/position/change_margin_type", params.clone())
+                    .await
+            })
             .await
             .context("Failed to set margin mode")?;
 
@@ -739,8 +760,11 @@ impl PerpRest for MexcPerpsAdapter {
 
         let params = HashMap::new();
         let response: GetPositionsResponse = self
-            .client
-            .get_private("/api/v1/private/position/open_positions", params)
+            .call_api("/api/v1/private/position/open_positions", || async {
+                self.client
+                    .get_private("/api/v1/private/position/open_positions", params.clone())
+                    .await
+            })
             .await
             .context("Failed to get positions")?;
 
@@ -802,8 +826,11 @@ impl PerpRest for MexcPerpsAdapter {
         let params = HashMap::new();
         let endpoint = format!("/api/v1/contract/funding_rate/{}", symbol);
         let response: FundingRateResponse = self
-            .client
-            .get_public(&endpoint, Some(params))
+            .call_api(&endpoint, || async {
+                self.client
+                    .get_public(&endpoint, Some(params.clone()))
+                    .await
+            })
             .await
             .context("Failed to get funding rate")?;
 
@@ -833,8 +860,11 @@ impl PerpRest for MexcPerpsAdapter {
 
         let params = HashMap::new();
         let response: GetAssetsResponse = self
-            .client
-            .get_private("/api/v1/private/account/assets", params)
+            .call_api("/api/v1/private/account/assets", || async {
+                self.client
+                    .get_private("/api/v1/private/account/assets", params.clone())
+                    .await
+            })
             .await
             .context("Failed to get balances")?;
 
@@ -910,8 +940,11 @@ impl PerpRest for MexcPerpsAdapter {
         params.insert("symbol".to_string(), symbol.to_string());
 
         let response: GetContractResponse = self
-            .client
-            .get_public("/api/v1/contract/detail", Some(params))
+            .call_api("/api/v1/contract/detail", || async {
+                self.client
+                    .get_public("/api/v1/contract/detail", Some(params.clone()))
+                    .await
+            })
             .await
             .context("Failed to get market info")?;
 
@@ -972,8 +1005,11 @@ impl PerpRest for MexcPerpsAdapter {
 
         let params = HashMap::new();
         let response: GetContractResponse = self
-            .client
-            .get_public("/api/v1/contract/detail", Some(params))
+            .call_api("/api/v1/contract/detail", || async {
+                self.client
+                    .get_public("/api/v1/contract/detail", Some(params.clone()))
+                    .await
+            })
             .await
             .context("Failed to get all markets")?;
 
@@ -1033,8 +1069,11 @@ impl PerpRest for MexcPerpsAdapter {
         params.insert("symbol".to_string(), symbol.to_string());
 
         let response: GetTickerResponse = self
-            .client
-            .get_public("/api/v1/contract/ticker", Some(params))
+            .call_api("/api/v1/contract/ticker", || async {
+                self.client
+                    .get_public("/api/v1/contract/ticker", Some(params.clone()))
+                    .await
+            })
             .await
             .context("Failed to get ticker")?;
 
@@ -1094,8 +1133,11 @@ impl PerpRest for MexcPerpsAdapter {
 
         let params = HashMap::new();
         let response: GetTickerResponse = self
-            .client
-            .get_public("/api/v1/contract/ticker", Some(params))
+            .call_api("/api/v1/contract/ticker", || async {
+                self.client
+                    .get_public("/api/v1/contract/ticker", Some(params.clone()))
+                    .await
+            })
             .await
             .context("Failed to get tickers")?;
 
@@ -1154,8 +1196,11 @@ impl PerpRest for MexcPerpsAdapter {
         let params = HashMap::new();
         let endpoint = format!("/api/v1/contract/fair_price/{}", symbol);
         let response: FairPriceResponse = self
-            .client
-            .get_public(&endpoint, Some(params))
+            .call_api(&endpoint, || async {
+                self.client
+                    .get_public(&endpoint, Some(params.clone()))
+                    .await
+            })
             .await
             .context("Failed to get mark price")?;
 
@@ -1182,8 +1227,11 @@ impl PerpRest for MexcPerpsAdapter {
         let params = HashMap::new();
         let endpoint = format!("/api/v1/contract/index_price/{}", symbol);
         let response: IndexPriceResponse = self
-            .client
-            .get_public(&endpoint, Some(params))
+            .call_api(&endpoint, || async {
+                self.client
+                    .get_public(&endpoint, Some(params.clone()))
+                    .await
+            })
             .await
             .context("Failed to get index price")?;
 
@@ -1228,8 +1276,11 @@ impl PerpRest for MexcPerpsAdapter {
 
         let endpoint = format!("/api/v1/contract/kline/{}", symbol);
         let response: GetKlineResponse = self
-            .client
-            .get_public(&endpoint, Some(params))
+            .call_api(&endpoint, || async {
+                self.client
+                    .get_public(&endpoint, Some(params.clone()))
+                    .await
+            })
             .await
             .context("Failed to get klines")?;
 
@@ -1294,8 +1345,11 @@ impl PerpRest for MexcPerpsAdapter {
         }
 
         let response: GetFundingResponse = self
-            .client
-            .get_public("/api/v1/contract/funding_rate/history", Some(params))
+            .call_api("/api/v1/contract/funding_rate/history", || async {
+                self.client
+                    .get_public("/api/v1/contract/funding_rate/history", Some(params.clone()))
+                    .await
+            })
             .await
             .context("Failed to get funding history")?;
 

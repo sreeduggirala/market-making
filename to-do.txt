@@ -1,0 +1,23 @@
+  | Priority    | Item                        | Effort     | Impact
+
+  |-------------|-----------------------------|------------|----------------
+
+  | 🔴 CRITICAL | Working executable binary   | 2-3 hours  | Can't run
+
+  | 🟠 HIGH     | Rate limiter integration    | 3-4 hours  | Exchange bans
+
+  | 🟠 HIGH     | Integration tests           | 8-12 hours | Production
+
+  | 🟡 MEDIUM   | Configuration system        | 3-4 hours  | Easier
+
+  | 🟡 MEDIUM   | Metrics/observability       | 4-6 hours  | Monitoring
+
+  | 🟡 MEDIUM   | Circuit breaker integration | 2-3 hours  | Failure
+
+  | 🟢 LOW      | Fix warnings                | 30-60 min  | Code
+
+  | 🟢 LOW      | User event wiring           | 2 hours    | Feature
+
+  | 🟢 LOW      | WebSocket robustness        | 2-3 hours  | Stability
+
+  | 🟢 LOW      | Shutdown handling           | 1-2 hours  | Clean exits

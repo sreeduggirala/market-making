@@ -11,7 +11,7 @@ pub mod manager;
 pub use manager::OrderManager;
 pub use order_book::OrderBook;
 
-use adapters::traits::{Order, OrderStatus};
+use adapters::traits::OrderStatus;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Exchange identifier

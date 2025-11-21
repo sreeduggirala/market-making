@@ -150,11 +150,15 @@ pub struct KrakenSpotAdapter {
     client: KrakenRestClient,
 
     /// Authentication credentials (shared with WebSocket)
+    #[allow(dead_code)]
     auth: KrakenAuth,
 
     // WebSocket stream receivers (stored for potential reuse)
+    #[allow(dead_code)]
     user_stream: Arc<Mutex<Option<mpsc::Receiver<UserEvent>>>>,
+    #[allow(dead_code)]
     book_stream: Arc<Mutex<Option<mpsc::Receiver<BookUpdate>>>>,
+    #[allow(dead_code)]
     trade_stream: Arc<Mutex<Option<mpsc::Receiver<TradeEvent>>>>,
 
     /// Current WebSocket connection status
@@ -164,10 +168,12 @@ pub struct KrakenSpotAdapter {
     health_data: Arc<RwLock<HealthData>>,
 
     // Production features
-    /// Rate limiter for REST API calls
+    /// Rate limiter for REST API calls (TODO: integrate)
+    #[allow(dead_code)]
     rate_limiter: RateLimiter,
 
-    /// Circuit breaker for fault tolerance
+    /// Circuit breaker for fault tolerance (TODO: integrate)
+    #[allow(dead_code)]
     circuit_breaker: CircuitBreaker,
 
     /// Counter for reconnection attempts
@@ -446,8 +452,13 @@ impl SpotRest for KrakenSpotAdapter {
 
         params.insert("userref".to_string(), new.client_order_id.clone());
 
-        let response: KrakenResponse<KrakenAddOrderResult> = self.client
-            .post_private("/0/private/AddOrder", params)
+        // Wrap with rate limiter and circuit breaker
+        let response: KrakenResponse<KrakenAddOrderResult> = self
+            .call_api("/0/private/AddOrder", || async {
+                self.client
+                    .post_private("/0/private/AddOrder", params.clone())
+                    .await
+            })
             .await?;
 
         let result = response.into_result()?;
@@ -481,8 +492,13 @@ impl SpotRest for KrakenSpotAdapter {
         let mut params = HashMap::new();
         params.insert("txid".to_string(), venue_order_id.to_string());
 
-        let response: KrakenResponse<KrakenCancelOrderResult> = self.client
-            .post_private("/0/private/CancelOrder", params)
+        // Wrap with rate limiter and circuit breaker
+        let response: KrakenResponse<KrakenCancelOrderResult> = self
+            .call_api("/0/private/CancelOrder", || async {
+                self.client
+                    .post_private("/0/private/CancelOrder", params.clone())
+                    .await
+            })
             .await?;
 
         let result = response.into_result()?;
@@ -508,8 +524,13 @@ impl SpotRest for KrakenSpotAdapter {
         params.insert("txid".to_string(), venue_order_id.to_string());
         params.insert("trades".to_string(), "false".to_string());
 
-        let response: KrakenResponse<KrakenOrderInfo> = self.client
-            .post_private("/0/private/QueryOrders", params)
+        // Wrap with rate limiter and circuit breaker
+        let response: KrakenResponse<KrakenOrderInfo> = self
+            .call_api("/0/private/QueryOrders", || async {
+                self.client
+                    .post_private("/0/private/QueryOrders", params.clone())
+                    .await
+            })
             .await?;
 
         let result = response.into_result()?;
@@ -541,10 +562,15 @@ impl SpotRest for KrakenSpotAdapter {
     }
 
     async fn get_open_orders(&self, _symbol: Option<&str>) -> Result<Vec<Order>> {
-        let params = HashMap::new();
+        let params: HashMap<String, String> = HashMap::new();
 
-        let response: KrakenResponse<HashMap<String, HashMap<String, KrakenOrderDetails>>> = self.client
-            .post_private("/0/private/OpenOrders", params)
+        // Wrap with rate limiter and circuit breaker
+        let response: KrakenResponse<HashMap<String, HashMap<String, KrakenOrderDetails>>> = self
+            .call_api("/0/private/OpenOrders", || async {
+                self.client
+                    .post_private("/0/private/OpenOrders", params.clone())
+                    .await
+            })
             .await?;
 
         let result = response.into_result()?;
@@ -644,10 +670,15 @@ impl SpotRest for KrakenSpotAdapter {
     }
 
     async fn get_balances(&self) -> Result<Vec<Balance>> {
-        let params = HashMap::new();
+        let params: HashMap<String, String> = HashMap::new();
 
-        let response: KrakenResponse<KrakenBalanceResult> = self.client
-            .post_private("/0/private/Balance", params)
+        // Wrap with rate limiter and circuit breaker
+        let response: KrakenResponse<KrakenBalanceResult> = self
+            .call_api("/0/private/Balance", || async {
+                self.client
+                    .post_private("/0/private/Balance", params.clone())
+                    .await
+            })
             .await?;
 
         let result = response.into_result()?;
@@ -683,8 +714,13 @@ impl SpotRest for KrakenSpotAdapter {
         let mut params = HashMap::new();
         params.insert("pair".to_string(), symbol.to_string());
 
-        let response: KrakenResponse<KrakenAssetPairsResult> = self.client
-            .get_public("/0/public/AssetPairs", Some(params))
+        // Wrap with rate limiter and circuit breaker
+        let response: KrakenResponse<KrakenAssetPairsResult> = self
+            .call_api("/0/public/AssetPairs", || async {
+                self.client
+                    .get_public("/0/public/AssetPairs", Some(params.clone()))
+                    .await
+            })
             .await?;
 
         let result = response.into_result()?;
@@ -753,8 +789,13 @@ impl SpotRest for KrakenSpotAdapter {
         let mut params = HashMap::new();
         params.insert("pair".to_string(), symbol.to_string());
 
-        let response: KrakenResponse<KrakenTickerResult> = self.client
-            .get_public("/0/public/Ticker", Some(params))
+        // Wrap with rate limiter and circuit breaker
+        let response: KrakenResponse<KrakenTickerResult> = self
+            .call_api("/0/public/Ticker", || async {
+                self.client
+                    .get_public("/0/public/Ticker", Some(params.clone()))
+                    .await
+            })
             .await?;
 
         let result = response.into_result()?;
@@ -792,8 +833,13 @@ impl SpotRest for KrakenSpotAdapter {
             p
         });
 
-        let response: KrakenResponse<KrakenTickerResult> = self.client
-            .get_public("/0/public/Ticker", params)
+        // Wrap with rate limiter and circuit breaker
+        let response: KrakenResponse<KrakenTickerResult> = self
+            .call_api("/0/public/Ticker", || async {
+                self.client
+                    .get_public("/0/public/Ticker", params.clone())
+                    .await
+            })
             .await?;
 
         let result = response.into_result()?;

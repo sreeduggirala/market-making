@@ -63,6 +63,7 @@ edition = "2021"
 adapters = { path = "crates/adapters" }
 oms = { path = "crates/oms" }
 inventory = { path = "crates/inventory" }
+strategies = { path = "crates/strategies" }
 
 tokio = { workspace = true }
 anyhow = { workspace = true }
@@ -73,3 +74,7 @@ dotenvy = { workspace = true }
 [[bin]]
 name = "test-core"
 path = "bin/test_core.rs"
+
+[[bin]]
+name = "run-avellaneda-stoikov"
+path = "bin/run_avellaneda_stoikov.rs"

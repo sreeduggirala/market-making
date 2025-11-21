@@ -38,11 +38,9 @@
 //! - **API Version**: Futures uses v3 REST API, v1 WebSocket (vs Spot's v2 WS)
 
 use crate::kraken::account::{
-    converters, KrakenAuth, KrakenRestClient,
-    KRAKEN_FUTURES_WS_URL,
+    KrakenAuth, KrakenRestClient,
 };
 use crate::traits::*;
-use anyhow::Result;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::{Mutex, RwLock};
