@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
+[features]
+default = []
+persistence = ["dep:persistence", "dep:rust_decimal"]
+
 [dependencies]
 # Workspace dependencies
 tokio = { workspace = true }
@@ -17,6 +21,10 @@ chrono = { workspace = true }
 
 # Local dependencies
 adapters = { path = "../adapters" }
+
+# Optional persistence support
+persistence = { path = "../persistence", optional = true }
+rust_decimal = { workspace = true, optional = true }
 
 # OMS-specific
 uuid = { version = "1.11", features = ["v4", "fast-rng"] }

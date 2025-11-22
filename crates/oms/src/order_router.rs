@@ -13,6 +13,9 @@ use std::sync::Arc;
 use tracing::{debug, error, info};
 use uuid::Uuid;
 
+#[cfg(feature = "persistence")]
+use crate::persistence_handle::PersistenceHandle;
+
 /// Trait for exchange adapters to enable dynamic dispatch
 #[async_trait::async_trait]
 pub trait ExchangeAdapter: Send + Sync {
@@ -49,6 +52,10 @@ pub struct OrderRouter {
 
     /// Reference to order book for state tracking
     order_book: Arc<OrderBook>,
+
+    /// Optional persistence handle for database writes
+    #[cfg(feature = "persistence")]
+    persistence: Option<PersistenceHandle>,
 }
 
 impl OrderRouter {
@@ -57,7 +64,16 @@ impl OrderRouter {
         Self {
             adapters: HashMap::new(),
             order_book,
+            #[cfg(feature = "persistence")]
+            persistence: None,
         }
+    }
+
+    /// Sets the persistence handle for database writes
+    #[cfg(feature = "persistence")]
+    pub fn with_persistence(mut self, persistence: PersistenceHandle) -> Self {
+        self.persistence = Some(persistence);
+        self
     }
 
     /// Registers an exchange adapter
@@ -93,6 +109,32 @@ impl OrderRouter {
             "Submitting order"
         );
 
+        // Persist order to database before submitting (fire-and-forget)
+        #[cfg(feature = "persistence")]
+        if let Some(ref p) = self.persistence {
+            let db_exchange: persistence::DbExchange = exchange.into();
+            let db_side: persistence::DbOrderSide = order.side.into();
+            let db_type: persistence::DbOrderType = order.ord_type.into();
+            let db_tif: Option<persistence::DbTimeInForce> = order.tif.map(Into::into);
+
+            let db_order = persistence::NewDbOrder {
+                client_order_id: order.client_order_id.clone(),
+                venue_order_id: None, // Not yet assigned
+                exchange: db_exchange,
+                symbol: order.symbol.clone(),
+                side: db_side,
+                order_type: db_type,
+                time_in_force: db_tif,
+                quantity: rust_decimal::Decimal::try_from(order.qty).unwrap_or_default(),
+                price: order.price.map(|p| rust_decimal::Decimal::try_from(p).unwrap_or_default()),
+                stop_price: order.stop_price.map(|p| rust_decimal::Decimal::try_from(p).unwrap_or_default()),
+                post_only: order.post_only,
+                reduce_only: order.reduce_only,
+                strategy_id: None, // TODO: pass strategy_id through NewOrder
+            };
+            p.insert_order(db_order);
+        }
+
         // Submit to exchange
         let result_order = match adapter.create_order(order.clone()).await {
             Ok(o) => o,
@@ -103,6 +145,19 @@ impl OrderRouter {
                     error = %e,
                     "Order submission failed"
                 );
+
+                // Persist rejection status (fire-and-forget)
+                #[cfg(feature = "persistence")]
+                if let Some(ref p) = self.persistence {
+                    let db_exchange: persistence::DbExchange = exchange.into();
+                    p.update_order_status(
+                        db_exchange,
+                        &client_id,
+                        persistence::DbOrderStatus::Rejected,
+                        None,
+                    );
+                }
+
                 return Err(OmsError::ExchangeError(e.to_string()));
             }
         };
@@ -110,6 +165,18 @@ impl OrderRouter {
         // Insert into order book and capture venue_order_id before move
         let venue_order_id = result_order.venue_order_id.clone();
         self.order_book.insert(result_order)?;
+
+        // Update order with venue_order_id (fire-and-forget)
+        #[cfg(feature = "persistence")]
+        if let Some(ref p) = self.persistence {
+            let db_exchange: persistence::DbExchange = exchange.into();
+            p.update_order_status(
+                db_exchange,
+                &client_id,
+                persistence::DbOrderStatus::New,
+                Some(&venue_order_id),
+            );
+        }
 
         info!(
             %exchange,
@@ -148,6 +215,13 @@ impl OrderRouter {
         {
             Ok(success) => {
                 if success {
+                    // Persist cancel status (fire-and-forget)
+                    #[cfg(feature = "persistence")]
+                    if let Some(ref p) = self.persistence {
+                        let db_exchange: persistence::DbExchange = exchange.into();
+                        p.cancel_order(db_exchange, client_order_id);
+                    }
+
                     info!(
                         %exchange,
                         client_order_id,
@@ -207,6 +281,7 @@ fn generate_client_order_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::now_ms;
     use adapters::traits::{OrderStatus, OrderType, Side, TimeInForce};
 
     struct MockAdapter;

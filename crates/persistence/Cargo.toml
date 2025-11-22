@@ -1,0 +1,43 @@
+[package]
+name = "persistence"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "PostgreSQL persistence layer for market making system"
+
+[dependencies]
+# Workspace dependencies
+tokio = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Chrono with serde support
+chrono = { version = "0.4", features = ["serde"] }
+
+# Decimal with serde support
+rust_decimal = { version = "1.38", features = ["serde", "serde-with-str"] }
+
+# SQLx with PostgreSQL and runtime-tokio
+sqlx = { version = "0.8", features = [
+    "runtime-tokio",
+    "tls-rustls",
+    "postgres",
+    "chrono",
+    "rust_decimal",
+    "uuid",
+    "json",
+    "migrate"
+] }
+
+# UUID for unique identifiers
+uuid = { version = "1.8", features = ["v4", "serde"] }
+
+# Internal crates for types
+adapters = { path = "../adapters" }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros"] }

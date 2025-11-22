@@ -12,6 +12,9 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, RwLock};
 use tracing::info;
 
+#[cfg(feature = "persistence")]
+use crate::persistence_handle::PersistenceHandle;
+
 /// Main Order Manager that coordinates all OMS components
 pub struct OrderManager {
     /// Order book for state tracking
@@ -22,6 +25,10 @@ pub struct OrderManager {
 
     /// Order router for submitting orders
     router: Arc<RwLock<OrderRouter>>,
+
+    /// Optional persistence handle for database writes
+    #[cfg(feature = "persistence")]
+    persistence: Option<PersistenceHandle>,
 }
 
 impl OrderManager {
@@ -35,12 +42,44 @@ impl OrderManager {
             order_book,
             event_processor,
             router,
+            #[cfg(feature = "persistence")]
+            persistence: None,
         };
 
         // Start periodic cleanup task
         manager.start_cleanup_task();
 
         manager
+    }
+
+    /// Creates a new OrderManager with persistence support
+    #[cfg(feature = "persistence")]
+    pub fn with_persistence(persistence: PersistenceHandle) -> Self {
+        let order_book = Arc::new(OrderBook::new());
+        let event_processor = Arc::new(
+            EventProcessor::new(order_book.clone()).with_persistence(persistence.clone()),
+        );
+        let router = Arc::new(RwLock::new(
+            OrderRouter::new(order_book.clone()).with_persistence(persistence.clone()),
+        ));
+
+        let manager = Self {
+            order_book,
+            event_processor,
+            router,
+            persistence: Some(persistence),
+        };
+
+        // Start periodic cleanup task
+        manager.start_cleanup_task();
+
+        manager
+    }
+
+    /// Gets a clone of the persistence handle if configured
+    #[cfg(feature = "persistence")]
+    pub fn persistence(&self) -> Option<PersistenceHandle> {
+        self.persistence.clone()
     }
 
     /// Starts a background task to periodically clean up old orders

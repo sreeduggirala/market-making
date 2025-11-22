@@ -8,8 +8,14 @@ pub mod event_processor;
 pub mod order_router;
 pub mod manager;
 
+#[cfg(feature = "persistence")]
+pub mod persistence_handle;
+
 pub use manager::OrderManager;
 pub use order_book::OrderBook;
+
+#[cfg(feature = "persistence")]
+pub use persistence_handle::PersistenceHandle;
 
 use adapters::traits::OrderStatus;
 use std::time::{SystemTime, UNIX_EPOCH};
