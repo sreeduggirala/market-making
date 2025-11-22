@@ -1828,14 +1828,22 @@ fn parse_futures_user_event(text: &str) -> Result<UserEvent> {
                     symbol: String,
                     #[serde(rename = "orderId")]
                     order_id: String,
+                    #[serde(rename = "externalOid", default)]
+                    external_oid: Option<String>,
                     vol: String,
                     #[serde(rename = "dealVol")]
                     deal_vol: String,
+                    #[serde(rename = "dealAvgPrice", default)]
+                    deal_avg_price: Option<String>,
                     price: String,
                     side: i32,
+                    #[serde(rename = "orderType", default)]
+                    order_type: Option<i32>,
                     state: i32,
                     #[serde(rename = "createTime")]
                     create_time: u64,
+                    #[serde(rename = "updateTime", default)]
+                    update_time: Option<u64>,
                 }
 
                 if let Some(data) = msg.data {
@@ -1860,11 +1868,20 @@ fn parse_futures_user_event(text: &str) -> Result<UserEvent> {
                         _ => (Side::Buy, false),
                     };
 
+                    // Map MEXC order type to internal type
+                    let ord_type = match order_data.order_type {
+                        Some(1) | Some(2) | Some(3) | Some(4) => OrderType::Limit,
+                        Some(5) | Some(6) => OrderType::Market,
+                        _ => OrderType::Limit,
+                    };
+
+                    let update_time = order_data.update_time.unwrap_or(order_data.create_time);
+
                     return Ok(UserEvent::OrderUpdate(Order {
                         venue_order_id: order_data.order_id,
-                        client_order_id: String::new(),
+                        client_order_id: order_data.external_oid.unwrap_or_default(),
                         symbol: order_data.symbol,
-                        ord_type: OrderType::Limit,
+                        ord_type,
                         side,
                         qty,
                         price: Some(order_data.price.parse().unwrap_or(0.0)),
@@ -1874,7 +1891,7 @@ fn parse_futures_user_event(text: &str) -> Result<UserEvent> {
                         filled_qty: filled,
                         remaining_qty: qty - filled,
                         created_ms: order_data.create_time,
-                        updated_ms: order_data.create_time,
+                        updated_ms: update_time,
                         recv_ms: now,
                         raw_status: Some(order_data.state.to_string()),
                     }));

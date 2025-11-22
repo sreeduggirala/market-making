@@ -450,7 +450,16 @@ impl SpotRest for KrakenSpotAdapter {
             params.insert("reduce_only".to_string(), "true".to_string());
         }
 
-        params.insert("userref".to_string(), new.client_order_id.clone());
+        // Kraken's userref must be a 32-bit signed integer, not a string
+        // Hash the client_order_id to create a numeric reference
+        // Note: cl_ord_id can be used via WebSocket for string-based tracking
+        if !new.client_order_id.is_empty() {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            new.client_order_id.hash(&mut hasher);
+            let userref = (hasher.finish() as i32).abs(); // Convert to positive i32
+            params.insert("userref".to_string(), userref.to_string());
+        }
 
         // Wrap with rate limiter and circuit breaker
         let response: KrakenResponse<KrakenAddOrderResult> = self
@@ -980,21 +989,56 @@ struct SystemStatusMessage {
     version: Option<String>,
 }
 
-// Order update from WebSocket
+// Order update from WebSocket v2 executions channel
+// See: https://docs.kraken.com/api/docs/websocket-v2/executions
 #[derive(Debug, Deserialize)]
 struct KrakenWsOrder {
-    #[serde(rename = "order_id")]
+    // Order identification
     order_id: String,
-    #[serde(rename = "cl_ord_id")]
+    #[serde(default)]
     cl_ord_id: Option<String>,
+    #[serde(default)]
+    order_userref: Option<i32>,
+
+    // Order details
     symbol: String,
     side: String,
     order_type: String,
     order_qty: String,
+    #[serde(default)]
     limit_price: Option<String>,
-    filled_qty: Option<String>,
+    #[serde(default)]
+    stop_price: Option<String>,
+
+    // Execution status
     order_status: String,
+    #[serde(default)]
+    exec_type: Option<String>, // pending_new, new, trade, filled, canceled, expired
+
+    // Fill information
+    #[serde(default)]
+    cum_qty: Option<String>,   // Cumulative filled quantity
+    #[serde(default)]
+    cum_cost: Option<String>,  // Cumulative cost
+    #[serde(default)]
+    avg_price: Option<String>, // Average fill price
+    #[serde(default)]
+    last_qty: Option<String>,  // Last fill quantity
+    #[serde(default)]
+    last_price: Option<String>, // Last fill price
+
+    // Fees
+    #[serde(default)]
+    fee_usd_equiv: Option<String>,
+
+    // Timestamps
     timestamp: String,
+
+    // Flags
+    #[serde(default)]
+    post_only: Option<bool>,
+    #[serde(default)]
+    reduce_only: Option<bool>,
 }
 
 // Book update from WebSocket
@@ -1023,13 +1067,11 @@ struct KrakenWsTrade {
 
 impl KrakenSpotAdapter {
     async fn connect_authenticated(&self) -> Result<WsStream> {
-        // First get a WebSocket token from REST API
-        let token = self.get_ws_token().await?;
-
-        let url = format!("{}?token={}", KRAKEN_SPOT_WS_AUTH_URL, token);
-        let (ws_stream, _) = connect_async(&url)
+        // WebSocket v2: Connect without token in URL
+        // Token is passed in subscription message params instead
+        let (ws_stream, _) = connect_async(KRAKEN_SPOT_WS_AUTH_URL)
             .await
-            .context("Failed to connect to Kraken WebSocket")?;
+            .context("Failed to connect to Kraken authenticated WebSocket")?;
 
         debug!("Connected to Kraken authenticated WebSocket");
         Ok(ws_stream)
@@ -1157,16 +1199,20 @@ impl KrakenSpotAdapter {
     }
 
     fn kraken_order_to_user_event(order: KrakenWsOrder) -> Result<UserEvent> {
-        let filled_qty = order.filled_qty
+        // Use cum_qty (cumulative quantity) for filled amount
+        let filled_qty = order.cum_qty
             .as_ref()
             .and_then(|s| s.parse().ok())
             .unwrap_or(0.0);
         let total_qty = order.order_qty.parse().unwrap_or(0.0);
 
+        // Map Kraken order status to internal status
+        // Kraken v2 statuses: pending_new, new, partially_filled, filled, canceled, expired
         let status = match order.order_status.as_str() {
-            "pending" => OrderStatus::New,
-            "open" => OrderStatus::New,
-            "closed" => OrderStatus::Filled,
+            "pending_new" | "pending" => OrderStatus::New,
+            "new" | "open" => OrderStatus::New,
+            "partially_filled" => OrderStatus::PartiallyFilled,
+            "filled" | "closed" => OrderStatus::Filled,
             "canceled" => OrderStatus::Canceled,
             "expired" => OrderStatus::Expired,
             _ => OrderStatus::Rejected,
@@ -1182,7 +1228,7 @@ impl KrakenSpotAdapter {
             side: converters::from_kraken_side(&order.side),
             qty: total_qty,
             price: order.limit_price.and_then(|p| p.parse().ok()),
-            stop_price: None,
+            stop_price: order.stop_price.and_then(|p| p.parse().ok()),
             tif: None,
             status,
             filled_qty,
@@ -1321,12 +1367,15 @@ impl SpotWs for KrakenSpotAdapter {
                 // Initialize heartbeat
                 let heartbeat = HeartbeatMonitor::new(HeartbeatConfig::production());
 
-                // Subscribe to executions
+                // Subscribe to executions (WebSocket v2 format)
+                // snap_orders: include open orders snapshot on connect
+                // snap_trades: include recent trade history on connect
                 let subscribe_msg = serde_json::json!({
                     "method": "subscribe",
                     "params": {
                         "channel": "executions",
-                        "snapshot": false,
+                        "snap_orders": true,
+                        "snap_trades": false,
                         "token": token
                     }
                 });

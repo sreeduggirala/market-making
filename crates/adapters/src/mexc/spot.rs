@@ -1989,43 +1989,49 @@ impl SpotWs for MexcSpotAdapter {
 fn parse_user_event(text: &str) -> Result<UserEvent> {
     use serde::Deserialize;
 
+    // MEXC uses Binance-compatible short field names, but we add aliases for robustness
+    // in case MEXC API changes to use longer field names
     #[derive(Deserialize)]
     struct UserEventMessage {
-        #[serde(rename = "e")]
+        #[serde(rename = "e", alias = "eventType")]
         event_type: String,
-        #[serde(rename = "E")]
+        #[serde(rename = "E", alias = "eventTime")]
         event_time: Option<u64>,
         // Order update fields
-        #[serde(rename = "s")]
+        #[serde(rename = "s", alias = "symbol")]
         symbol: Option<String>,
-        #[serde(rename = "c")]
+        #[serde(rename = "c", alias = "clientOrderId")]
         client_order_id: Option<String>,
-        #[serde(rename = "i")]
+        #[serde(rename = "i", alias = "orderId")]
         order_id: Option<String>,
-        #[serde(rename = "S")]
+        #[serde(rename = "S", alias = "side")]
         side: Option<String>,
-        #[serde(rename = "o")]
+        #[serde(rename = "o", alias = "type")]
         order_type: Option<String>,
-        #[serde(rename = "q")]
+        #[serde(rename = "q", alias = "origQty")]
         quantity: Option<String>,
-        #[serde(rename = "p")]
+        #[serde(rename = "p", alias = "price")]
         price: Option<String>,
-        #[serde(rename = "X")]
+        #[serde(rename = "X", alias = "status")]
         order_status: Option<String>,
-        #[serde(rename = "z")]
+        #[serde(rename = "z", alias = "executedQty", alias = "cumulativeQuantity")]
         filled_qty: Option<String>,
-        #[serde(rename = "n")]
+        #[serde(rename = "Z", alias = "cummulativeQuoteQty", alias = "cumulativeAmount", default)]
+        cumulative_quote_qty: Option<String>,
+        #[serde(rename = "n", alias = "commission")]
         commission: Option<String>,
-        #[serde(rename = "N")]
+        #[serde(rename = "N", alias = "commissionAsset")]
         commission_asset: Option<String>,
+        #[serde(alias = "avgPrice", default)]
+        avg_price: Option<String>,
         // Balance update fields
-        #[serde(rename = "a")]
+        #[serde(rename = "a", alias = "asset")]
         asset: Option<String>,
-        #[serde(rename = "d")]
+        #[serde(rename = "d", alias = "balanceDelta")]
         balance_delta: Option<String>,
-        #[serde(rename = "f")]
+        #[serde(rename = "f", alias = "free", alias = "available")]
         free: Option<String>,
-        #[serde(rename = "l")]
+        #[serde(rename = "l", alias = "locked")]
         locked: Option<String>,
     }
 
