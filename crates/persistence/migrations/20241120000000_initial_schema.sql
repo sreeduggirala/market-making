@@ -8,7 +8,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- ENUMS
 -- ============================================================================
 
-CREATE TYPE exchange_type AS ENUM ('kraken', 'mexc', 'bybit');
+CREATE TYPE exchange_type AS ENUM ('kraken', 'mexc', 'bybit', 'kalshi');
 CREATE TYPE order_side AS ENUM ('buy', 'sell');
 CREATE TYPE order_type AS ENUM ('limit', 'market', 'stop_loss', 'stop_loss_limit', 'take_profit', 'take_profit_limit');
 CREATE TYPE order_status AS ENUM ('new', 'partially_filled', 'filled', 'canceled', 'rejected', 'expired');

@@ -19,6 +19,8 @@ impl From<Exchange> for DbExchange {
         match e {
             Exchange::Kraken => DbExchange::Kraken,
             Exchange::Mexc => DbExchange::Mexc,
+            Exchange::Bybit => DbExchange::Bybit,
+            Exchange::Kalshi => DbExchange::Kalshi,
         }
     }
 }
@@ -28,7 +30,8 @@ impl From<DbExchange> for Exchange {
         match e {
             DbExchange::Kraken => Exchange::Kraken,
             DbExchange::Mexc => Exchange::Mexc,
-            DbExchange::Bybit => Exchange::Mexc, // Fallback until Bybit added to OMS
+            DbExchange::Bybit => Exchange::Bybit,
+            DbExchange::Kalshi => Exchange::Kalshi,
         }
     }
 }

@@ -16,6 +16,8 @@
 //!   KRAKEN_API_KEY     - Kraken API key
 //!   KRAKEN_API_SECRET  - Kraken API secret
 
+use adapters::bybit::spot::BybitSpotAdapter;
+use adapters::kalshi::spot::KalshiSpotAdapter;
 use adapters::kraken::spot::KrakenSpotAdapter;
 use adapters::mexc::spot::MexcSpotAdapter;
 use adapters::traits::SpotWs;
@@ -94,6 +96,18 @@ async fn main() -> Result<()> {
             std::env::var("MEXC_API_SECRET")
                 .expect("MEXC_API_SECRET environment variable not set"),
         ),
+        Exchange::Bybit => (
+            std::env::var("BYBIT_API_KEY")
+                .expect("BYBIT_API_KEY environment variable not set"),
+            std::env::var("BYBIT_API_SECRET")
+                .expect("BYBIT_API_SECRET environment variable not set"),
+        ),
+        Exchange::Kalshi => (
+            std::env::var("KALSHI_API_KEY_ID")
+                .expect("KALSHI_API_KEY_ID environment variable not set"),
+            std::env::var("KALSHI_PRIVATE_KEY")
+                .expect("KALSHI_PRIVATE_KEY environment variable not set"),
+        ),
     };
 
     // =================================================================
@@ -107,6 +121,8 @@ async fn main() -> Result<()> {
     enum ExchangeAdapterHandle {
         Kraken(Arc<KrakenSpotAdapter>),
         Mexc(Arc<MexcSpotAdapter>),
+        Bybit(Arc<BybitSpotAdapter>),
+        Kalshi(Arc<KalshiSpotAdapter>),
     }
 
     let (adapter, oms, adapter_handle) = match config.exchange {
@@ -135,6 +151,33 @@ async fn main() -> Result<()> {
             let adapter = Arc::new(Adapter::Spot(SpotAdapter::new(mexc.clone() as Arc<dyn SpotWs>)));
 
             (adapter, oms, ExchangeAdapterHandle::Mexc(mexc))
+        }
+        Exchange::Bybit => {
+            let bybit = Arc::new(BybitSpotAdapter::new(api_key, api_secret));
+
+            // Create OMS and register adapter
+            let oms = Arc::new(OrderManager::new());
+            let user_stream = bybit.subscribe_user().await?;
+            oms.register_exchange(Exchange::Bybit, bybit.clone(), user_stream).await;
+
+            // Create unified adapter for strategy
+            let adapter = Arc::new(Adapter::Spot(SpotAdapter::new(bybit.clone() as Arc<dyn SpotWs>)));
+
+            (adapter, oms, ExchangeAdapterHandle::Bybit(bybit))
+        }
+        Exchange::Kalshi => {
+            // Kalshi uses RSA-PSS authentication with key ID and private key
+            let kalshi = Arc::new(KalshiSpotAdapter::new(api_key, &api_secret)?);
+
+            // Create OMS and register adapter
+            let oms = Arc::new(OrderManager::new());
+            let user_stream = kalshi.subscribe_user().await?;
+            oms.register_exchange(Exchange::Kalshi, kalshi.clone(), user_stream).await;
+
+            // Create unified adapter for strategy
+            let adapter = Arc::new(Adapter::Spot(SpotAdapter::new(kalshi.clone() as Arc<dyn SpotWs>)));
+
+            (adapter, oms, ExchangeAdapterHandle::Kalshi(kalshi))
         }
     };
 
@@ -360,6 +403,8 @@ async fn main() -> Result<()> {
     match adapter_handle {
         ExchangeAdapterHandle::Kraken(kraken) => kraken.shutdown().await,
         ExchangeAdapterHandle::Mexc(mexc) => mexc.shutdown().await,
+        ExchangeAdapterHandle::Bybit(bybit) => bybit.shutdown().await,
+        ExchangeAdapterHandle::Kalshi(kalshi) => kalshi.shutdown().await,
     }
 
     // Give WebSocket a moment to close cleanly

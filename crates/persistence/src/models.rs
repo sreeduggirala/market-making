@@ -16,6 +16,7 @@ pub enum DbExchange {
     Kraken,
     Mexc,
     Bybit,
+    Kalshi,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type, Serialize, Deserialize)]

@@ -25,6 +25,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub enum Exchange {
     Kraken,
     Mexc,
+    Bybit,
+    Kalshi,
 }
 
 impl std::fmt::Display for Exchange {
@@ -32,6 +34,8 @@ impl std::fmt::Display for Exchange {
         match self {
             Exchange::Kraken => write!(f, "kraken"),
             Exchange::Mexc => write!(f, "mexc"),
+            Exchange::Bybit => write!(f, "bybit"),
+            Exchange::Kalshi => write!(f, "kalshi"),
         }
     }
 }
