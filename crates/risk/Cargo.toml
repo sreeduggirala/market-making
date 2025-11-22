@@ -1,7 +1,30 @@
 [package]
 name = "risk"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 publish = false
+description = "Risk management for market making strategies"
 
 [dependencies]
+# Workspace dependencies
+tokio = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+rust_decimal = { workspace = true }
+
+# Internal crates
+adapters = { path = "../adapters" }
+oms = { path = "../oms" }
+inventory = { path = "../inventory" }
+
+# Concurrent data structures
+dashmap = "5.5"
+
+# For atomic operations
+parking_lot = "0.12"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros"] }

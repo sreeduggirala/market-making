@@ -5,6 +5,7 @@ members = [
     "crates/oms",
     "crates/inventory",
     "crates/strategies",
+    "crates/risk",
 ]
 
 [workspace.dependencies]
@@ -64,6 +65,7 @@ adapters = { path = "crates/adapters" }
 oms = { path = "crates/oms" }
 inventory = { path = "crates/inventory" }
 strategies = { path = "crates/strategies" }
+risk = { path = "crates/risk" }
 
 tokio = { workspace = true }
 anyhow = { workspace = true }
