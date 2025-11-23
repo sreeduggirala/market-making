@@ -325,6 +325,48 @@ impl Clone for CircuitBreaker {
 mod tests {
     use super::*;
 
+    // ==========================================================================
+    // Configuration Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_default_config() {
+        let config = CircuitBreakerConfig::default();
+        assert_eq!(config.failure_threshold, 5);
+        assert_eq!(config.success_threshold, 2);
+        assert_eq!(config.timeout_ms, 60000);
+        assert_eq!(config.half_open_max_requests, 3);
+    }
+
+    #[test]
+    fn test_production_config() {
+        let config = CircuitBreakerConfig::production();
+        assert_eq!(config.failure_threshold, 5);
+        assert_eq!(config.success_threshold, 3);
+        assert_eq!(config.timeout_ms, 60000);
+        assert_eq!(config.half_open_max_requests, 2);
+    }
+
+    #[test]
+    fn test_development_config() {
+        let config = CircuitBreakerConfig::development();
+        assert_eq!(config.failure_threshold, 3);
+        assert_eq!(config.success_threshold, 2);
+        assert_eq!(config.timeout_ms, 10000);
+        assert_eq!(config.half_open_max_requests, 5);
+    }
+
+    // ==========================================================================
+    // Basic State Tests
+    // ==========================================================================
+
+    #[tokio::test]
+    async fn test_initial_state_is_closed() {
+        let cb = CircuitBreaker::new("test", CircuitBreakerConfig::default());
+        assert_eq!(cb.state().await, CircuitState::Closed);
+        assert_eq!(cb.failure_count().await, 0);
+    }
+
     #[tokio::test]
     async fn test_circuit_breaker_opens_on_failures() {
         let config = CircuitBreakerConfig {
@@ -343,7 +385,30 @@ mod tests {
         }
 
         assert_eq!(cb.state().await, CircuitState::Open);
+        assert_eq!(cb.failure_count().await, 3);
     }
+
+    #[tokio::test]
+    async fn test_circuit_stays_closed_below_threshold() {
+        let config = CircuitBreakerConfig {
+            failure_threshold: 5,
+            ..CircuitBreakerConfig::default()
+        };
+
+        let cb = CircuitBreaker::new("test", config);
+
+        // 4 failures (below threshold of 5)
+        for _ in 0..4 {
+            cb.on_failure().await;
+        }
+
+        assert_eq!(cb.state().await, CircuitState::Closed);
+        assert_eq!(cb.failure_count().await, 4);
+    }
+
+    // ==========================================================================
+    // State Transitions
+    // ==========================================================================
 
     #[tokio::test]
     async fn test_circuit_breaker_half_open_transition() {
@@ -393,5 +458,145 @@ mod tests {
         cb.on_success().await;
 
         assert_eq!(cb.state().await, CircuitState::Closed);
+    }
+
+    #[tokio::test]
+    async fn test_half_open_reopens_on_failure() {
+        let config = CircuitBreakerConfig {
+            failure_threshold: 2,
+            success_threshold: 2,
+            timeout_ms: 50,
+            half_open_max_requests: 3,
+        };
+
+        let cb = CircuitBreaker::new("test", config);
+
+        // Open circuit
+        cb.on_failure().await;
+        cb.on_failure().await;
+        assert_eq!(cb.state().await, CircuitState::Open);
+
+        // Wait and transition to half-open
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        cb.allow_request().await;
+        assert_eq!(cb.state().await, CircuitState::HalfOpen);
+
+        // Fail in half-open state - should reopen
+        cb.on_failure().await;
+        assert_eq!(cb.state().await, CircuitState::Open);
+    }
+
+    // ==========================================================================
+    // Request Limits
+    // ==========================================================================
+
+    #[tokio::test]
+    async fn test_open_circuit_rejects_requests() {
+        let config = CircuitBreakerConfig {
+            failure_threshold: 2,
+            success_threshold: 2,
+            timeout_ms: 10000, // Long timeout so it stays open
+            half_open_max_requests: 3,
+        };
+
+        let cb = CircuitBreaker::new("test", config);
+
+        // Open circuit
+        cb.on_failure().await;
+        cb.on_failure().await;
+        assert_eq!(cb.state().await, CircuitState::Open);
+
+        // Request should be rejected
+        assert!(!cb.allow_request().await);
+    }
+
+    #[tokio::test]
+    async fn test_half_open_limits_concurrent_requests() {
+        let config = CircuitBreakerConfig {
+            failure_threshold: 2,
+            success_threshold: 5,
+            timeout_ms: 50,
+            half_open_max_requests: 2,
+        };
+
+        let cb = CircuitBreaker::new("test", config);
+
+        // Open circuit
+        cb.on_failure().await;
+        cb.on_failure().await;
+
+        // Wait and transition to half-open
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // First request transitions from Open to HalfOpen (doesn't count against limit)
+        assert!(cb.allow_request().await);
+        assert_eq!(cb.state().await, CircuitState::HalfOpen);
+
+        // Next 2 requests count against half_open_max_requests (which is 2)
+        assert!(cb.allow_request().await); // count = 1
+        assert!(cb.allow_request().await); // count = 2
+
+        // Fourth request should be rejected (count >= half_open_max_requests)
+        let fourth_result = cb.allow_request().await;
+        assert!(!fourth_result, "Request should be rejected when half-open limit reached");
+    }
+
+    // ==========================================================================
+    // Reset and Recovery
+    // ==========================================================================
+
+    #[tokio::test]
+    async fn test_success_resets_failure_count() {
+        let config = CircuitBreakerConfig {
+            failure_threshold: 5,
+            ..CircuitBreakerConfig::default()
+        };
+
+        let cb = CircuitBreaker::new("test", config);
+
+        // Accumulate some failures
+        cb.on_failure().await;
+        cb.on_failure().await;
+        assert_eq!(cb.failure_count().await, 2);
+
+        // Success should reset
+        cb.on_success().await;
+        assert_eq!(cb.failure_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_manual_reset() {
+        let config = CircuitBreakerConfig {
+            failure_threshold: 2,
+            ..CircuitBreakerConfig::default()
+        };
+
+        let cb = CircuitBreaker::new("test", config);
+
+        // Open circuit
+        cb.on_failure().await;
+        cb.on_failure().await;
+        assert_eq!(cb.state().await, CircuitState::Open);
+
+        // Manual reset
+        cb.reset().await;
+        assert_eq!(cb.state().await, CircuitState::Closed);
+        assert_eq!(cb.failure_count().await, 0);
+    }
+
+    // ==========================================================================
+    // Clone Behavior
+    // ==========================================================================
+
+    #[tokio::test]
+    async fn test_clone_shares_state() {
+        let cb = CircuitBreaker::new("test", CircuitBreakerConfig::default());
+        let cb_clone = cb.clone();
+
+        // Failure on original
+        cb.on_failure().await;
+
+        // Should be reflected in clone
+        assert_eq!(cb_clone.failure_count().await, 1);
     }
 }

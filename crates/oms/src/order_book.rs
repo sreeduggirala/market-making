@@ -307,6 +307,16 @@ mod tests {
         }
     }
 
+    fn make_test_order_with_status(client_id: &str, venue_id: &str, symbol: &str, status: OrderStatus) -> Order {
+        let mut order = make_test_order(client_id, venue_id, symbol);
+        order.status = status;
+        order
+    }
+
+    // ==========================================================================
+    // Basic CRUD Operations
+    // ==========================================================================
+
     #[test]
     fn test_insert_and_get() {
         let book = OrderBook::new();
@@ -327,6 +337,10 @@ mod tests {
         let result = book.insert(order);
 
         assert!(result.is_err());
+        match result {
+            Err(crate::OmsError::DuplicateOrder(id)) => assert_eq!(id, "client1"),
+            _ => panic!("Expected DuplicateOrder error"),
+        }
     }
 
     #[test]
@@ -355,6 +369,58 @@ mod tests {
     }
 
     #[test]
+    fn test_get_nonexistent_order() {
+        let book = OrderBook::new();
+        assert!(book.get_by_client_id("nonexistent").is_none());
+        assert!(book.get_by_venue_id("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_get_by_symbol_empty() {
+        let book = OrderBook::new();
+        let orders = book.get_by_symbol("BTCUSD");
+        assert!(orders.is_empty());
+    }
+
+    // ==========================================================================
+    // Update Operations
+    // ==========================================================================
+
+    #[test]
+    fn test_update_order() {
+        let book = OrderBook::new();
+        let mut order = make_test_order("client1", "venue1", "BTCUSD");
+        book.insert(order.clone()).unwrap();
+
+        // Update the order
+        order.status = OrderStatus::PartiallyFilled;
+        order.filled_qty = 0.5;
+        order.remaining_qty = 0.5;
+        book.update(order).unwrap();
+
+        let retrieved = book.get_by_client_id("client1").unwrap();
+        assert_eq!(retrieved.status, OrderStatus::PartiallyFilled);
+        assert_eq!(retrieved.filled_qty, 0.5);
+    }
+
+    #[test]
+    fn test_update_nonexistent_order() {
+        let book = OrderBook::new();
+        let order = make_test_order("client1", "venue1", "BTCUSD");
+
+        let result = book.update(order);
+        assert!(result.is_err());
+        match result {
+            Err(crate::OmsError::OrderNotFound(id)) => assert_eq!(id, "client1"),
+            _ => panic!("Expected OrderNotFound error"),
+        }
+    }
+
+    // ==========================================================================
+    // Open Orders Filtering
+    // ==========================================================================
+
+    #[test]
     fn test_get_open_orders() {
         let book = OrderBook::new();
 
@@ -370,5 +436,219 @@ mod tests {
         let open = book.get_open_orders(None);
         assert_eq!(open.len(), 1);
         assert_eq!(open[0].client_order_id, "c1");
+    }
+
+    #[test]
+    fn test_get_open_orders_includes_partially_filled() {
+        let book = OrderBook::new();
+
+        book.insert(make_test_order_with_status("c1", "v1", "BTCUSD", OrderStatus::New)).unwrap();
+        book.insert(make_test_order_with_status("c2", "v2", "BTCUSD", OrderStatus::PartiallyFilled)).unwrap();
+        book.insert(make_test_order_with_status("c3", "v3", "BTCUSD", OrderStatus::Filled)).unwrap();
+        book.insert(make_test_order_with_status("c4", "v4", "BTCUSD", OrderStatus::Canceled)).unwrap();
+
+        let open = book.get_open_orders(None);
+        assert_eq!(open.len(), 2);
+    }
+
+    #[test]
+    fn test_get_open_orders_by_symbol() {
+        let book = OrderBook::new();
+
+        book.insert(make_test_order_with_status("c1", "v1", "BTCUSD", OrderStatus::New)).unwrap();
+        book.insert(make_test_order_with_status("c2", "v2", "BTCUSD", OrderStatus::New)).unwrap();
+        book.insert(make_test_order_with_status("c3", "v3", "ETHUSD", OrderStatus::New)).unwrap();
+
+        let btc_open = book.get_open_orders(Some("BTCUSD"));
+        assert_eq!(btc_open.len(), 2);
+
+        let eth_open = book.get_open_orders(Some("ETHUSD"));
+        assert_eq!(eth_open.len(), 1);
+    }
+
+    // ==========================================================================
+    // Remove Operations
+    // ==========================================================================
+
+    #[test]
+    fn test_remove_order() {
+        let book = OrderBook::new();
+        book.insert(make_test_order("c1", "v1", "BTCUSD")).unwrap();
+
+        let removed = book.remove("c1");
+        assert!(removed.is_some());
+        assert_eq!(removed.unwrap().client_order_id, "c1");
+
+        // Should be gone now
+        assert!(book.get_by_client_id("c1").is_none());
+        assert!(book.get_by_venue_id("v1").is_none());
+    }
+
+    #[test]
+    fn test_remove_nonexistent_order() {
+        let book = OrderBook::new();
+        let removed = book.remove("nonexistent");
+        assert!(removed.is_none());
+    }
+
+    #[test]
+    fn test_remove_cleans_up_indexes() {
+        let book = OrderBook::new();
+        book.insert(make_test_order("c1", "v1", "BTCUSD")).unwrap();
+        book.insert(make_test_order("c2", "v2", "BTCUSD")).unwrap();
+
+        book.remove("c1");
+
+        // Symbol index should still have one order
+        let by_symbol = book.get_by_symbol("BTCUSD");
+        assert_eq!(by_symbol.len(), 1);
+        assert_eq!(by_symbol[0].client_order_id, "c2");
+    }
+
+    // ==========================================================================
+    // Statistics
+    // ==========================================================================
+
+    #[test]
+    fn test_len_and_is_empty() {
+        let book = OrderBook::new();
+        assert!(book.is_empty());
+        assert_eq!(book.len(), 0);
+
+        book.insert(make_test_order("c1", "v1", "BTCUSD")).unwrap();
+        assert!(!book.is_empty());
+        assert_eq!(book.len(), 1);
+
+        book.insert(make_test_order("c2", "v2", "BTCUSD")).unwrap();
+        assert_eq!(book.len(), 2);
+    }
+
+    #[test]
+    fn test_get_stats() {
+        let book = OrderBook::new();
+
+        book.insert(make_test_order_with_status("c1", "v1", "BTCUSD", OrderStatus::New)).unwrap();
+        book.insert(make_test_order_with_status("c2", "v2", "BTCUSD", OrderStatus::New)).unwrap();
+        book.insert(make_test_order_with_status("c3", "v3", "BTCUSD", OrderStatus::PartiallyFilled)).unwrap();
+        book.insert(make_test_order_with_status("c4", "v4", "BTCUSD", OrderStatus::Filled)).unwrap();
+        book.insert(make_test_order_with_status("c5", "v5", "BTCUSD", OrderStatus::Canceled)).unwrap();
+        book.insert(make_test_order_with_status("c6", "v6", "BTCUSD", OrderStatus::Rejected)).unwrap();
+        book.insert(make_test_order_with_status("c7", "v7", "BTCUSD", OrderStatus::Expired)).unwrap();
+
+        let stats = book.get_stats();
+        assert_eq!(stats.total_orders, 7);
+        assert_eq!(stats.new_orders, 2);
+        assert_eq!(stats.partially_filled, 1);
+        assert_eq!(stats.filled_orders, 1);
+        assert_eq!(stats.canceled_orders, 1);
+        assert_eq!(stats.rejected_orders, 1);
+        assert_eq!(stats.expired_orders, 1);
+    }
+
+    // ==========================================================================
+    // Get All Orders
+    // ==========================================================================
+
+    #[test]
+    fn test_get_all_orders() {
+        let book = OrderBook::new();
+
+        book.insert(make_test_order("c1", "v1", "BTCUSD")).unwrap();
+        book.insert(make_test_order("c2", "v2", "BTCUSD")).unwrap();
+        book.insert(make_test_order("c3", "v3", "ETHUSD")).unwrap();
+
+        let all = book.get_all_orders(None);
+        assert_eq!(all.len(), 3);
+
+        let btc_only = book.get_all_orders(Some("BTCUSD"));
+        assert_eq!(btc_only.len(), 2);
+    }
+
+    // ==========================================================================
+    // Retention and Cleanup
+    // ==========================================================================
+
+    #[test]
+    fn test_with_retention() {
+        let book = OrderBook::with_retention(1000); // 1 second retention
+        assert_eq!(book.max_order_age_ms, 1000);
+    }
+
+    #[test]
+    fn test_cleanup_old_orders() {
+        let book = OrderBook::with_retention(0); // Immediate cleanup for testing
+
+        // Insert completed orders with old timestamps
+        let mut old_filled = make_test_order_with_status("c1", "v1", "BTCUSD", OrderStatus::Filled);
+        old_filled.updated_ms = 0; // Very old
+
+        let mut old_canceled = make_test_order_with_status("c2", "v2", "BTCUSD", OrderStatus::Canceled);
+        old_canceled.updated_ms = 0;
+
+        // Insert new order
+        let mut new_order = make_test_order_with_status("c3", "v3", "BTCUSD", OrderStatus::New);
+        new_order.updated_ms = crate::now_ms();
+
+        book.insert(old_filled).unwrap();
+        book.insert(old_canceled).unwrap();
+        book.insert(new_order).unwrap();
+
+        assert_eq!(book.len(), 3);
+
+        // Cleanup should remove completed orders
+        let removed = book.cleanup_old_orders();
+        assert_eq!(removed, 2);
+        assert_eq!(book.len(), 1);
+
+        // Only the new order should remain
+        assert!(book.get_by_client_id("c3").is_some());
+    }
+
+    #[test]
+    fn test_cleanup_preserves_open_orders() {
+        let book = OrderBook::with_retention(0);
+
+        // Open orders should not be cleaned up even with old timestamps
+        let mut old_new = make_test_order_with_status("c1", "v1", "BTCUSD", OrderStatus::New);
+        old_new.updated_ms = 0;
+
+        let mut old_partial = make_test_order_with_status("c2", "v2", "BTCUSD", OrderStatus::PartiallyFilled);
+        old_partial.updated_ms = 0;
+
+        book.insert(old_new).unwrap();
+        book.insert(old_partial).unwrap();
+
+        let removed = book.cleanup_old_orders();
+        assert_eq!(removed, 0);
+        assert_eq!(book.len(), 2);
+    }
+
+    // ==========================================================================
+    // Default Implementation
+    // ==========================================================================
+
+    #[test]
+    fn test_default() {
+        let book = OrderBook::default();
+        assert!(book.is_empty());
+        // Default retention is 24 hours
+        assert_eq!(book.max_order_age_ms, 24 * 60 * 60 * 1000);
+    }
+
+    // ==========================================================================
+    // Concurrency (basic)
+    // ==========================================================================
+
+    #[test]
+    fn test_clone() {
+        let book = OrderBook::new();
+        book.insert(make_test_order("c1", "v1", "BTCUSD")).unwrap();
+
+        let cloned = book.clone();
+        assert_eq!(cloned.len(), 1);
+
+        // Both should see the same data (Arc)
+        book.insert(make_test_order("c2", "v2", "BTCUSD")).unwrap();
+        assert_eq!(cloned.len(), 2);
     }
 }

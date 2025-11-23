@@ -272,6 +272,43 @@ pub struct PositionStats {
 mod tests {
     use super::*;
 
+    fn make_test_position(symbol: &str, qty: f64, entry_px: f64) -> Position {
+        Position {
+            exchange: None,
+            symbol: symbol.to_string(),
+            qty,
+            entry_px,
+            mark_px: None,
+            liquidation_px: None,
+            unrealized_pnl: None,
+            realized_pnl: None,
+            margin: None,
+            leverage: None,
+            opened_ms: None,
+            updated_ms: now_ms(),
+        }
+    }
+
+    fn make_test_fill(symbol: &str, qty: f64, price: f64) -> Fill {
+        Fill {
+            venue_order_id: "v1".to_string(),
+            client_order_id: "c1".to_string(),
+            symbol: symbol.to_string(),
+            price,
+            qty,
+            fee: 0.0,
+            fee_ccy: "USD".to_string(),
+            is_maker: true,
+            exec_id: "exec1".to_string(),
+            ex_ts_ms: now_ms(),
+            recv_ms: now_ms(),
+        }
+    }
+
+    // ==========================================================================
+    // Basic Position Management
+    // ==========================================================================
+
     #[test]
     fn test_position_update() {
         let manager = PositionManager::new();
@@ -297,6 +334,71 @@ mod tests {
         assert_eq!(retrieved.qty, 1.0);
         assert_eq!(retrieved.entry_px, 50000.0);
     }
+
+    #[test]
+    fn test_get_nonexistent_position() {
+        let manager = PositionManager::new();
+        assert!(manager.get_position(Exchange::Kraken, "BTCUSD").is_none());
+    }
+
+    #[test]
+    fn test_position_update_overwrites() {
+        let manager = PositionManager::new();
+
+        // Initial position
+        manager.update_position(Exchange::Kraken, make_test_position("BTCUSD", 1.0, 50000.0));
+
+        // Update position
+        manager.update_position(Exchange::Kraken, make_test_position("BTCUSD", 2.0, 51000.0));
+
+        let pos = manager.get_position(Exchange::Kraken, "BTCUSD").unwrap();
+        assert_eq!(pos.qty, 2.0);
+        assert_eq!(pos.entry_px, 51000.0);
+    }
+
+    // ==========================================================================
+    // Multi-Exchange Position Management
+    // ==========================================================================
+
+    #[test]
+    fn test_positions_across_exchanges() {
+        let manager = PositionManager::new();
+
+        manager.update_position(Exchange::Kraken, make_test_position("BTCUSD", 1.0, 50000.0));
+        manager.update_position(Exchange::Mexc, make_test_position("BTCUSD", 2.0, 51000.0));
+        manager.update_position(Exchange::Bybit, make_test_position("ETHUSD", 10.0, 3000.0));
+
+        // Check Kraken
+        let kraken_btc = manager.get_position(Exchange::Kraken, "BTCUSD").unwrap();
+        assert_eq!(kraken_btc.qty, 1.0);
+
+        // Check MEXC
+        let mexc_btc = manager.get_position(Exchange::Mexc, "BTCUSD").unwrap();
+        assert_eq!(mexc_btc.qty, 2.0);
+
+        // Check Bybit ETH
+        let bybit_eth = manager.get_position(Exchange::Bybit, "ETHUSD").unwrap();
+        assert_eq!(bybit_eth.qty, 10.0);
+    }
+
+    #[test]
+    fn test_get_positions_for_exchange() {
+        let manager = PositionManager::new();
+
+        manager.update_position(Exchange::Kraken, make_test_position("BTCUSD", 1.0, 50000.0));
+        manager.update_position(Exchange::Kraken, make_test_position("ETHUSD", 10.0, 3000.0));
+        manager.update_position(Exchange::Mexc, make_test_position("BTCUSD", 2.0, 51000.0));
+
+        let kraken_positions = manager.get_positions_for_exchange(Exchange::Kraken);
+        assert_eq!(kraken_positions.len(), 2);
+
+        let mexc_positions = manager.get_positions_for_exchange(Exchange::Mexc);
+        assert_eq!(mexc_positions.len(), 1);
+    }
+
+    // ==========================================================================
+    // Net Position Calculation
+    // ==========================================================================
 
     #[test]
     fn test_net_position() {
@@ -346,6 +448,29 @@ mod tests {
     }
 
     #[test]
+    fn test_net_position_fully_hedged() {
+        let manager = PositionManager::new();
+
+        manager.update_position(Exchange::Kraken, make_test_position("BTCUSD", 1.0, 50000.0));
+        manager.update_position(Exchange::Mexc, make_test_position("BTCUSD", -1.0, 50000.0));
+
+        let net = manager.get_net_position("BTCUSD");
+        assert!((net.net_qty).abs() < 0.0001); // Effectively zero
+    }
+
+    #[test]
+    fn test_net_position_no_positions() {
+        let manager = PositionManager::new();
+        let net = manager.get_net_position("BTCUSD");
+        assert_eq!(net.net_qty, 0.0);
+        assert!(net.by_exchange.is_empty());
+    }
+
+    // ==========================================================================
+    // Hedging Logic
+    // ==========================================================================
+
+    #[test]
     fn test_needs_hedging() {
         let net_pos = NetPosition {
             symbol: "BTCUSD".to_string(),
@@ -356,5 +481,171 @@ mod tests {
 
         assert!(net_pos.needs_hedging(1.0));
         assert!(!net_pos.needs_hedging(2.0));
+    }
+
+    #[test]
+    fn test_hedge_qty_long() {
+        let net_pos = NetPosition {
+            symbol: "BTCUSD".to_string(),
+            net_qty: 2.0,
+            avg_entry_px: 50000.0,
+            by_exchange: HashMap::new(),
+        };
+
+        // Threshold 1.0, need to hedge 1.0 (sell 1.0 to get to 1.0)
+        assert_eq!(net_pos.hedge_qty(1.0), 1.0);
+    }
+
+    #[test]
+    fn test_hedge_qty_short() {
+        let net_pos = NetPosition {
+            symbol: "BTCUSD".to_string(),
+            net_qty: -2.0,
+            avg_entry_px: 50000.0,
+            by_exchange: HashMap::new(),
+        };
+
+        // Threshold 1.0, need to hedge -1.0 (buy 1.0 to get to -1.0)
+        assert_eq!(net_pos.hedge_qty(1.0), -1.0);
+    }
+
+    #[test]
+    fn test_hedge_qty_within_threshold() {
+        let net_pos = NetPosition {
+            symbol: "BTCUSD".to_string(),
+            net_qty: 0.5,
+            avg_entry_px: 50000.0,
+            by_exchange: HashMap::new(),
+        };
+
+        // Within threshold, no hedging needed
+        assert_eq!(net_pos.hedge_qty(1.0), 0.0);
+    }
+
+    // ==========================================================================
+    // Fill-Based Updates
+    // ==========================================================================
+
+    #[test]
+    fn test_update_from_fill_creates_position() {
+        let manager = PositionManager::new();
+        let fill = make_test_fill("BTCUSD", 1.0, 50000.0);
+
+        manager.update_from_fill(Exchange::Kraken, &fill);
+
+        let pos = manager.get_position(Exchange::Kraken, "BTCUSD").unwrap();
+        assert_eq!(pos.symbol, "BTCUSD");
+    }
+
+    #[test]
+    fn test_update_from_fill_increments_count() {
+        let manager = PositionManager::new();
+        let fill = make_test_fill("BTCUSD", 1.0, 50000.0);
+
+        // First fill creates position
+        manager.update_from_fill(Exchange::Kraken, &fill);
+
+        // Second fill increments count
+        manager.update_from_fill(Exchange::Kraken, &fill);
+
+        // Position should exist
+        assert!(manager.get_position(Exchange::Kraken, "BTCUSD").is_some());
+    }
+
+    // ==========================================================================
+    // Clear and Get All
+    // ==========================================================================
+
+    #[test]
+    fn test_clear_position() {
+        let manager = PositionManager::new();
+        manager.update_position(Exchange::Kraken, make_test_position("BTCUSD", 1.0, 50000.0));
+
+        manager.clear_position(Exchange::Kraken, "BTCUSD");
+
+        assert!(manager.get_position(Exchange::Kraken, "BTCUSD").is_none());
+    }
+
+    #[test]
+    fn test_get_all_positions() {
+        let manager = PositionManager::new();
+
+        manager.update_position(Exchange::Kraken, make_test_position("BTCUSD", 1.0, 50000.0));
+        manager.update_position(Exchange::Mexc, make_test_position("ETHUSD", 10.0, 3000.0));
+
+        let all = manager.get_all_positions();
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn test_get_tracked_symbols() {
+        let manager = PositionManager::new();
+
+        manager.update_position(Exchange::Kraken, make_test_position("BTCUSD", 1.0, 50000.0));
+        manager.update_position(Exchange::Mexc, make_test_position("BTCUSD", 2.0, 51000.0));
+        manager.update_position(Exchange::Bybit, make_test_position("ETHUSD", 10.0, 3000.0));
+
+        let symbols = manager.get_tracked_symbols();
+        assert_eq!(symbols.len(), 2);
+        assert!(symbols.contains(&"BTCUSD".to_string()));
+        assert!(symbols.contains(&"ETHUSD".to_string()));
+    }
+
+    // ==========================================================================
+    // Statistics
+    // ==========================================================================
+
+    #[test]
+    fn test_get_stats_empty() {
+        let manager = PositionManager::new();
+        let stats = manager.get_stats();
+        assert_eq!(stats.total_positions, 0);
+        assert_eq!(stats.active_positions, 0);
+    }
+
+    #[test]
+    fn test_get_stats_with_positions() {
+        let manager = PositionManager::new();
+
+        // Active position with PnL
+        let mut pos1 = make_test_position("BTCUSD", 1.0, 50000.0);
+        pos1.unrealized_pnl = Some(1000.0);
+        pos1.realized_pnl = Some(500.0);
+        manager.update_position(Exchange::Kraken, pos1);
+
+        // Flat position
+        let pos2 = make_test_position("ETHUSD", 0.0, 3000.0);
+        manager.update_position(Exchange::Mexc, pos2);
+
+        let stats = manager.get_stats();
+        assert_eq!(stats.total_positions, 2);
+        assert_eq!(stats.active_positions, 1);
+        assert_eq!(stats.total_unrealized_pnl, 1000.0);
+        assert_eq!(stats.total_realized_pnl, 500.0);
+    }
+
+    // ==========================================================================
+    // Default Implementation
+    // ==========================================================================
+
+    #[test]
+    fn test_default() {
+        let manager = PositionManager::default();
+        assert!(manager.get_all_positions().is_empty());
+    }
+
+    // ==========================================================================
+    // Clone Behavior
+    // ==========================================================================
+
+    #[test]
+    fn test_clone_shares_state() {
+        let manager = PositionManager::new();
+        let cloned = manager.clone();
+
+        manager.update_position(Exchange::Kraken, make_test_position("BTCUSD", 1.0, 50000.0));
+
+        // Clone should see the same data
+        assert!(cloned.get_position(Exchange::Kraken, "BTCUSD").is_some());
     }
 }

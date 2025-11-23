@@ -31,13 +31,13 @@ async fn main() -> Result<()> {
         .with_target(false)
         .init();
 
-    info!("🚀 Starting Market Making System");
+    info!("Starting Market Making System");
 
     // =================================================================
     // 1. Initialize Exchange Adapters
     // =================================================================
 
-    info!("📡 Initializing exchange adapters...");
+    info!("Initializing exchange adapters...");
 
     let kraken_key = std::env::var("KRAKEN_API_KEY")
         .expect("KRAKEN_API_KEY not set");
@@ -53,13 +53,13 @@ async fn main() -> Result<()> {
 
     let mexc = Arc::new(MexcSpotAdapter::new(mexc_key, mexc_secret));
 
-    info!("✅ Adapters initialized");
+    info!("Adapters initialized");
 
     // =================================================================
     // 2. Initialize Order Management System
     // =================================================================
 
-    info!("⚙️  Initializing OMS...");
+    info!("Initializing OMS...");
 
     let oms = Arc::new(OrderManager::new());
 
@@ -73,13 +73,13 @@ async fn main() -> Result<()> {
     oms.register_exchange(Exchange::Mexc, mexc.clone(), mexc_user_stream)
         .await;
 
-    info!("✅ OMS initialized with 2 exchanges");
+    info!("OMS initialized with 2 exchanges");
 
     // =================================================================
     // 3. Initialize Inventory Manager
     // =================================================================
 
-    info!("📊 Initializing inventory manager...");
+    info!("Initializing inventory manager...");
 
     let hedging_policy = HedgingPolicy::CrossExchange {
         primary: Exchange::Kraken, // Make markets here
@@ -102,13 +102,13 @@ async fn main() -> Result<()> {
     // Start inventory monitoring
     inventory.start().await;
 
-    info!("✅ Inventory manager started (cross-exchange hedging enabled)");
+    info!("Inventory manager started (cross-exchange hedging enabled)");
 
     // =================================================================
     // 4. Initialize Market Making Strategy
     // =================================================================
 
-    info!("💹 Initializing market maker...");
+    info!("Initializing market maker...");
 
     let config = MarketMakerConfig {
         exchange: Exchange::Kraken,
@@ -127,18 +127,18 @@ async fn main() -> Result<()> {
     // Initialize (cancel existing orders, etc.)
     market_maker.initialize().await?;
 
-    info!("✅ Market maker initialized");
+    info!("Market maker initialized");
 
     // =================================================================
     // 5. Run the Strategy
     // =================================================================
 
-    info!("🎯 Starting market making...");
-    info!("📈 Making markets on {} for {}",
+    info!("Starting market making...");
+    info!("Making markets on {} for {}",
         Exchange::Kraken,
         "BTCUSD"
     );
-    info!("🔄 Hedging on {} when position > $1000", Exchange::Mexc);
+    info!("Hedging on {} when position > $1000", Exchange::Mexc);
 
     // Set up graceful shutdown
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel(1);
@@ -146,7 +146,7 @@ async fn main() -> Result<()> {
     // Handle Ctrl+C
     tokio::spawn(async move {
         tokio::signal::ctrl_c().await.unwrap();
-        info!("🛑 Shutdown signal received");
+        info!("Shutdown signal received");
         let _ = shutdown_tx.send(());
     });
 
@@ -184,7 +184,7 @@ async fn main() -> Result<()> {
                         // Print OMS stats
                         let order_stats = oms.get_order_stats();
                         info!(
-                            "📊 Orders: {} total, {} open, {} filled",
+                            "Orders: {} total, {} open, {} filled",
                             order_stats.total_orders,
                             order_stats.new_orders + order_stats.partially_filled,
                             order_stats.filled_orders
@@ -193,7 +193,7 @@ async fn main() -> Result<()> {
                         // Print inventory stats
                         let hedge_stats = inventory.get_stats().await;
                         info!(
-                            "🛡️  Hedges: {} executed, ${:.2} volume",
+                            "Hedges: {} executed, ${:.2} volume",
                             hedge_stats.total_hedges,
                             hedge_stats.hedge_volume_usd
                         );
@@ -201,7 +201,7 @@ async fn main() -> Result<()> {
                         // Print position
                         let net_pos = inventory.get_net_position("BTCUSD");
                         info!(
-                            "💼 Position: {:.4} BTC (avg entry: ${:.2})",
+                            "Position: {:.4} BTC (avg entry: ${:.2})",
                             net_pos.net_qty,
                             net_pos.avg_entry_px
                         );
@@ -217,14 +217,14 @@ async fn main() -> Result<()> {
     // Wait for shutdown
     let _ = shutdown_rx.recv().await;
 
-    info!("🛑 Shutting down...");
+    info!("Shutting down...");
 
     // Cleanup
     strategy_handle.abort();
     stats_handle.abort();
 
     // Cancel all orders
-    info!("❌ Canceling all orders...");
+    info!("Canceling all orders...");
     let _ = oms.cancel_all_orders(Exchange::Kraken, None).await;
     let _ = oms.cancel_all_orders(Exchange::Mexc, None).await;
 
@@ -232,7 +232,7 @@ async fn main() -> Result<()> {
     kraken.shutdown().await;
     mexc.shutdown().await;
 
-    info!("✅ Shutdown complete");
+    info!("Shutdown complete");
 
     Ok(())
 }

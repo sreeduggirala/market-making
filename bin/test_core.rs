@@ -27,13 +27,13 @@ async fn main() -> Result<()> {
         .with_target(false)
         .init();
 
-    info!("🚀 Testing Core System Integration");
+    info!("Testing Core System Integration");
 
     // =================================================================
     // 1. Initialize Exchange Adapters
     // =================================================================
 
-    info!("📡 Initializing exchange adapters...");
+    info!("Initializing exchange adapters...");
 
     let kraken_key = std::env::var("KRAKEN_API_KEY").expect("KRAKEN_API_KEY not set");
     let kraken_secret = std::env::var("KRAKEN_API_SECRET").expect("KRAKEN_API_SECRET not set");
@@ -45,13 +45,13 @@ async fn main() -> Result<()> {
 
     let mexc = Arc::new(MexcSpotAdapter::new(mexc_key, mexc_secret));
 
-    info!("✅ Adapters initialized");
+    info!("Adapters initialized");
 
     // =================================================================
     // 2. Initialize Order Management System
     // =================================================================
 
-    info!("⚙️  Initializing OMS...");
+    info!("Initializing OMS...");
 
     let oms = Arc::new(OrderManager::new());
 
@@ -65,13 +65,13 @@ async fn main() -> Result<()> {
     oms.register_exchange(Exchange::Mexc, mexc.clone(), mexc_user_stream)
         .await;
 
-    info!("✅ OMS initialized with 2 exchanges");
+    info!("OMS initialized with 2 exchanges");
 
     // =================================================================
     // 3. Initialize Position Manager (Simple Tracking)
     // =================================================================
 
-    info!("📊 Initializing position manager...");
+    info!("Initializing position manager...");
 
     let position_manager = Arc::new(PositionManager::new());
 
@@ -91,13 +91,13 @@ async fn main() -> Result<()> {
         }
     });
 
-    info!("✅ Position manager started");
+    info!("Position manager started");
 
     // =================================================================
     // 4. Test Order Submission
     // =================================================================
 
-    info!("💹 Testing order submission...");
+    info!("Testing order submission...");
 
     // Create a test order (this won't actually execute - too small for real markets)
     let test_order = NewOrder {
@@ -116,7 +116,7 @@ async fn main() -> Result<()> {
     info!("Submitting test order to Kraken...");
     match oms.submit_order(Exchange::Kraken, test_order).await {
         Ok(client_id) => {
-            info!(client_order_id = %client_id, "✅ Order submitted successfully");
+            info!(client_order_id = %client_id, "Order submitted successfully");
 
             // Query the order back
             if let Some(order) = oms.get_order(&client_id) {
@@ -126,7 +126,7 @@ async fn main() -> Result<()> {
                     qty = order.qty,
                     price = ?order.price,
                     status = ?order.status,
-                    "📋 Order details"
+                    "Order details"
                 );
             }
 
@@ -134,9 +134,9 @@ async fn main() -> Result<()> {
             tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
             info!("Canceling test order...");
             match oms.cancel_order(Exchange::Kraken, &client_id).await {
-                Ok(true) => info!("✅ Order canceled successfully"),
-                Ok(false) => warn!("⚠️  Order already canceled or filled"),
-                Err(e) => warn!(error = %e, "❌ Failed to cancel order"),
+                Ok(true) => info!("Order canceled successfully"),
+                Ok(false) => warn!("Order already canceled or filled"),
+                Err(e) => warn!(error = %e, "Failed to cancel order"),
             }
         }
         Err(e) => {
@@ -150,7 +150,7 @@ async fn main() -> Result<()> {
 
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
-    info!("📊 Final Statistics:");
+    info!("Final Statistics:");
 
     let order_stats = oms.get_order_stats();
     info!(
@@ -167,9 +167,9 @@ async fn main() -> Result<()> {
         pos_stats.total_positions, pos_stats.active_positions
     );
 
-    info!("🏁 Core system test complete!");
+    info!("Core system test complete!");
     info!("");
-    info!("✅ INTEGRATION VERIFIED:");
+    info!("INTEGRATION VERIFIED:");
     info!("   • Adapters ← connected → OMS");
     info!("   • OMS ← broadcasts → Position Manager");
     info!("   • Order submission working");

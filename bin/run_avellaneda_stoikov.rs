@@ -43,7 +43,7 @@ async fn main() -> Result<()> {
         .with_thread_ids(false)
         .init();
 
-    info!("🚀 Starting Avellaneda-Stoikov Market Maker");
+    info!("Starting Avellaneda-Stoikov Market Maker");
 
     // =================================================================
     // 1. Load Configuration
@@ -121,7 +121,7 @@ async fn main() -> Result<()> {
     // 2. Initialize Exchange Adapter
     // =================================================================
 
-    info!("📡 Connecting to {}...", config.exchange);
+    info!("Connecting to {}...", config.exchange);
 
     // Create exchange-specific adapter and register with OMS
     // We need to handle each exchange type separately due to type constraints
@@ -202,8 +202,8 @@ async fn main() -> Result<()> {
         }
     };
 
-    info!("✅ Exchange adapter initialized");
-    info!("✅ OMS initialized");
+    info!("Exchange adapter initialized");
+    info!("OMS initialized");
 
     // =================================================================
     // 4. Setup Shutdown Channel (needed for event handlers)
@@ -215,7 +215,7 @@ async fn main() -> Result<()> {
     let shutdown_tx_clone = shutdown_tx.clone();
     tokio::spawn(async move {
         tokio::signal::ctrl_c().await.unwrap();
-        info!("🛑 Shutdown signal received (Ctrl+C)");
+        info!("Shutdown signal received (Ctrl+C)");
         let _ = shutdown_tx_clone.send(());
     });
 
@@ -223,7 +223,7 @@ async fn main() -> Result<()> {
     // 5. Initialize Position Manager
     // =================================================================
 
-    info!("📊 Initializing position manager...");
+    info!("Initializing position manager...");
 
     let position_manager = Arc::new(PositionManager::new());
 
@@ -296,13 +296,13 @@ async fn main() -> Result<()> {
         }
     });
 
-    info!("✅ Position manager initialized");
+    info!("Position manager initialized");
 
     // =================================================================
     // 6. Initialize Avellaneda-Stoikov Strategy
     // =================================================================
 
-    info!("💹 Initializing Avellaneda-Stoikov strategy...");
+    info!("Initializing Avellaneda-Stoikov strategy...");
 
     let mut strategy = AvellanedaStoikov::new(
         config.clone(),
@@ -314,7 +314,7 @@ async fn main() -> Result<()> {
     // Initialize (cancel existing orders, etc.)
     strategy.initialize().await?;
 
-    info!("✅ Strategy initialized");
+    info!("Strategy initialized");
 
     // =================================================================
     // 7. Run Strategy
@@ -322,9 +322,9 @@ async fn main() -> Result<()> {
 
     let mut shutdown_rx = shutdown_tx.subscribe();
 
-    info!("🎯 Starting market making...");
-    info!("📈 Trading {} on {}", config.symbol, "Kraken Spot");
-    info!("⚠️  Press Ctrl+C to stop");
+    info!("Starting market making...");
+    info!("Trading {} on {}", config.symbol, "Kraken Spot");
+    info!("Press Ctrl+C to stop");
 
     // Run strategy in a task
     let strategy = Arc::new(strategy);
@@ -360,7 +360,7 @@ async fn main() -> Result<()> {
                         // Print OMS stats
                         let order_stats = oms.get_order_stats();
                         info!(
-                            "📊 Orders: {} total | {} open | {} filled | {} canceled",
+                            "Orders: {} total | {} open | {} filled | {} canceled",
                             order_stats.total_orders,
                             order_stats.new_orders + order_stats.partially_filled,
                             order_stats.filled_orders,
@@ -370,14 +370,14 @@ async fn main() -> Result<()> {
                         // Print current position
                         if let Some(position) = position_manager.get_position(config.exchange, &config.symbol) {
                             info!(
-                                "💼 Position: {} BTC | Entry: ${:.2} | Mark: ${:.2} | PnL: ${:.2}",
+                                "Position: {} BTC | Entry: ${:.2} | Mark: ${:.2} | PnL: ${:.2}",
                                 position.qty,
                                 position.entry_px,
                                 position.mark_px.unwrap_or(0.0),
                                 position.unrealized_pnl.unwrap_or(0.0)
                             );
                         } else {
-                            info!("💼 Position: FLAT (no position)");
+                            info!("Position: FLAT (no position)");
                         }
                     }
                     _ = shutdown_rx_clone.recv() => {
@@ -391,20 +391,20 @@ async fn main() -> Result<()> {
     // Wait for shutdown signal
     let _ = shutdown_rx.recv().await;
 
-    info!("🛑 Shutting down...");
+    info!("Shutting down...");
 
     // =================================================================
     // 8. Cleanup
     // =================================================================
 
     // First, cancel all orders (most important for safety)
-    info!("❌ Canceling all orders...");
+    info!("Canceling all orders...");
     if let Err(e) = strategy.shutdown().await {
         error!("Error during strategy shutdown: {}", e);
     }
 
     // Wait for event handlers to drain (they'll receive shutdown signal)
-    info!("⏳ Waiting for event handlers to complete...");
+    info!("Waiting for event handlers to complete...");
     let drain_timeout = tokio::time::Duration::from_secs(5);
 
     // Wait for fill handler
@@ -417,10 +417,10 @@ async fn main() -> Result<()> {
     let _ = tokio::time::timeout(drain_timeout, strategy_handle).await;
     let _ = tokio::time::timeout(drain_timeout, stats_handle).await;
 
-    info!("✅ Event handlers stopped");
+    info!("Event handlers stopped");
 
     // Shutdown adapter (closes WebSocket connections)
-    info!("🔌 Disconnecting from exchange...");
+    info!("Disconnecting from exchange...");
     match adapter_handle {
         ExchangeAdapterHandle::BinanceUs(binance_us) => binance_us.shutdown().await,
         ExchangeAdapterHandle::Bybit(bybit) => bybit.shutdown().await,
@@ -432,8 +432,8 @@ async fn main() -> Result<()> {
     // Give WebSocket a moment to close cleanly
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-    info!("✅ Shutdown complete");
-    info!("👋 Goodbye!");
+    info!("Shutdown complete");
+    info!("Goodbye!");
 
     Ok(())
 }
