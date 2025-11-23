@@ -406,3 +406,236 @@ pub mod converters {
         }
     }
 }
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::traits::{OrderStatus, OrderType, Side, TimeInForce, MarketStatus, KlineInterval};
+
+    // -------------------------------------------------------------------------
+    // Authentication Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_auth_new() {
+        let auth = BinanceUsAuth::new("api_key".to_string(), "api_secret".to_string());
+        assert_eq!(auth.api_key, "api_key");
+        assert_eq!(auth.api_secret, "api_secret");
+    }
+
+    #[test]
+    fn test_auth_sign_produces_hex_signature() {
+        let auth = BinanceUsAuth::new("api_key".to_string(), "secret123".to_string());
+        let signature = auth.sign("symbol=BTCUSDT&side=BUY&type=LIMIT");
+
+        // Signature should be hex-encoded (only hex characters)
+        assert!(!signature.is_empty());
+        assert!(signature.chars().all(|c| c.is_ascii_hexdigit()));
+        // SHA256 produces 32 bytes = 64 hex chars
+        assert_eq!(signature.len(), 64);
+    }
+
+    #[test]
+    fn test_auth_sign_deterministic() {
+        let auth = BinanceUsAuth::new("api_key".to_string(), "secret123".to_string());
+        let query = "symbol=BTCUSDT&timestamp=1234567890";
+        let sig1 = auth.sign(query);
+        let sig2 = auth.sign(query);
+        assert_eq!(sig1, sig2, "same input should produce same signature");
+    }
+
+    #[test]
+    fn test_auth_sign_different_secrets_produce_different_signatures() {
+        let auth1 = BinanceUsAuth::new("api_key".to_string(), "secret1".to_string());
+        let auth2 = BinanceUsAuth::new("api_key".to_string(), "secret2".to_string());
+        let query = "symbol=BTCUSDT";
+        let sig1 = auth1.sign(query);
+        let sig2 = auth2.sign(query);
+        assert_ne!(sig1, sig2, "different secrets should produce different signatures");
+    }
+
+    #[test]
+    fn test_auth_get_timestamp_is_reasonable() {
+        let ts = BinanceUsAuth::get_timestamp();
+        let min_ts: u64 = 1704067200000; // 2024-01-01
+        let max_ts: u64 = 4102444800000; // 2100-01-01
+        assert!(ts > min_ts, "timestamp {} is too old", ts);
+        assert!(ts < max_ts, "timestamp {} is too far in future", ts);
+    }
+
+    // -------------------------------------------------------------------------
+    // Order Type Converter Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_to_binance_order_type() {
+        assert_eq!(converters::to_binance_order_type(OrderType::Limit), "LIMIT");
+        assert_eq!(converters::to_binance_order_type(OrderType::Market), "MARKET");
+        assert_eq!(converters::to_binance_order_type(OrderType::StopLoss), "STOP_LOSS");
+        assert_eq!(converters::to_binance_order_type(OrderType::StopLossLimit), "STOP_LOSS_LIMIT");
+        assert_eq!(converters::to_binance_order_type(OrderType::TakeProfit), "TAKE_PROFIT");
+        assert_eq!(converters::to_binance_order_type(OrderType::TakeProfitLimit), "TAKE_PROFIT_LIMIT");
+    }
+
+    #[test]
+    fn test_from_binance_order_type() {
+        assert!(matches!(converters::from_binance_order_type("LIMIT"), OrderType::Limit));
+        assert!(matches!(converters::from_binance_order_type("MARKET"), OrderType::Market));
+        assert!(matches!(converters::from_binance_order_type("STOP_LOSS"), OrderType::StopLoss));
+        assert!(matches!(converters::from_binance_order_type("STOP_LOSS_LIMIT"), OrderType::StopLossLimit));
+        assert!(matches!(converters::from_binance_order_type("TAKE_PROFIT"), OrderType::TakeProfit));
+        assert!(matches!(converters::from_binance_order_type("TAKE_PROFIT_LIMIT"), OrderType::TakeProfitLimit));
+    }
+
+    #[test]
+    fn test_from_binance_order_type_unknown_defaults_to_limit() {
+        assert!(matches!(converters::from_binance_order_type("UNKNOWN"), OrderType::Limit));
+        assert!(matches!(converters::from_binance_order_type(""), OrderType::Limit));
+    }
+
+    // -------------------------------------------------------------------------
+    // Side Converter Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_to_binance_side() {
+        assert_eq!(converters::to_binance_side(Side::Buy), "BUY");
+        assert_eq!(converters::to_binance_side(Side::Sell), "SELL");
+    }
+
+    #[test]
+    fn test_from_binance_side() {
+        assert!(matches!(converters::from_binance_side("BUY"), Side::Buy));
+        assert!(matches!(converters::from_binance_side("SELL"), Side::Sell));
+        // Case insensitive
+        assert!(matches!(converters::from_binance_side("buy"), Side::Buy));
+        assert!(matches!(converters::from_binance_side("sell"), Side::Sell));
+    }
+
+    #[test]
+    fn test_from_binance_side_unknown_defaults_to_buy() {
+        assert!(matches!(converters::from_binance_side("UNKNOWN"), Side::Buy));
+    }
+
+    // -------------------------------------------------------------------------
+    // Time-in-Force Converter Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_to_binance_tif() {
+        assert_eq!(converters::to_binance_tif(TimeInForce::Gtc), "GTC");
+        assert_eq!(converters::to_binance_tif(TimeInForce::Ioc), "IOC");
+        assert_eq!(converters::to_binance_tif(TimeInForce::Fok), "FOK");
+    }
+
+    #[test]
+    fn test_from_binance_tif() {
+        assert!(matches!(converters::from_binance_tif("GTC"), TimeInForce::Gtc));
+        assert!(matches!(converters::from_binance_tif("IOC"), TimeInForce::Ioc));
+        assert!(matches!(converters::from_binance_tif("FOK"), TimeInForce::Fok));
+    }
+
+    #[test]
+    fn test_from_binance_tif_unknown_defaults_to_gtc() {
+        assert!(matches!(converters::from_binance_tif("UNKNOWN"), TimeInForce::Gtc));
+    }
+
+    // -------------------------------------------------------------------------
+    // Order Status Converter Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_from_binance_order_status() {
+        assert!(matches!(converters::from_binance_order_status("NEW"), OrderStatus::New));
+        assert!(matches!(converters::from_binance_order_status("PARTIALLY_FILLED"), OrderStatus::PartiallyFilled));
+        assert!(matches!(converters::from_binance_order_status("FILLED"), OrderStatus::Filled));
+        assert!(matches!(converters::from_binance_order_status("CANCELED"), OrderStatus::Canceled));
+        assert!(matches!(converters::from_binance_order_status("CANCELLED"), OrderStatus::Canceled));
+        assert!(matches!(converters::from_binance_order_status("REJECTED"), OrderStatus::Rejected));
+        assert!(matches!(converters::from_binance_order_status("EXPIRED"), OrderStatus::Expired));
+    }
+
+    #[test]
+    fn test_from_binance_order_status_case_insensitive() {
+        assert!(matches!(converters::from_binance_order_status("new"), OrderStatus::New));
+        assert!(matches!(converters::from_binance_order_status("filled"), OrderStatus::Filled));
+    }
+
+    #[test]
+    fn test_from_binance_order_status_unknown_defaults_to_new() {
+        assert!(matches!(converters::from_binance_order_status("UNKNOWN"), OrderStatus::New));
+    }
+
+    // -------------------------------------------------------------------------
+    // Market Status Converter Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_from_binance_symbol_status() {
+        assert!(matches!(converters::from_binance_symbol_status("TRADING"), MarketStatus::Trading));
+        assert!(matches!(converters::from_binance_symbol_status("HALT"), MarketStatus::Halt));
+        assert!(matches!(converters::from_binance_symbol_status("HALTED"), MarketStatus::Halt));
+        assert!(matches!(converters::from_binance_symbol_status("BREAK"), MarketStatus::Halt));
+        assert!(matches!(converters::from_binance_symbol_status("PRE_TRADING"), MarketStatus::PreTrading));
+        assert!(matches!(converters::from_binance_symbol_status("POST_TRADING"), MarketStatus::PostTrading));
+    }
+
+    #[test]
+    fn test_from_binance_symbol_status_unknown_defaults_to_halt() {
+        assert!(matches!(converters::from_binance_symbol_status("UNKNOWN"), MarketStatus::Halt));
+    }
+
+    // -------------------------------------------------------------------------
+    // Kline Interval Converter Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_to_binance_interval() {
+        assert_eq!(converters::to_binance_interval(KlineInterval::M1), "1m");
+        assert_eq!(converters::to_binance_interval(KlineInterval::M5), "5m");
+        assert_eq!(converters::to_binance_interval(KlineInterval::M15), "15m");
+        assert_eq!(converters::to_binance_interval(KlineInterval::M30), "30m");
+        assert_eq!(converters::to_binance_interval(KlineInterval::H1), "1h");
+        assert_eq!(converters::to_binance_interval(KlineInterval::H4), "4h");
+        assert_eq!(converters::to_binance_interval(KlineInterval::D1), "1d");
+    }
+
+    // -------------------------------------------------------------------------
+    // REST Client Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_rest_client_new_spot() {
+        let client = BinanceUsRestClient::new_spot(None);
+        assert_eq!(client.base_url, BINANCE_US_REST_URL);
+    }
+
+    #[test]
+    fn test_rest_client_with_auth() {
+        let auth = BinanceUsAuth::new("key".to_string(), "secret".to_string());
+        let client = BinanceUsRestClient::new_spot(Some(auth));
+        assert!(client.auth.is_some());
+    }
+
+    // -------------------------------------------------------------------------
+    // URL Constants Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_binance_us_urls_are_valid() {
+        assert!(BINANCE_US_REST_URL.starts_with("https://"));
+        assert!(BINANCE_US_WS_URL.starts_with("wss://"));
+        assert!(BINANCE_US_WS_COMBINED_URL.starts_with("wss://"));
+    }
+
+    #[test]
+    fn test_binance_us_urls_contain_binance_us() {
+        assert!(BINANCE_US_REST_URL.contains("binance.us"));
+        assert!(BINANCE_US_WS_URL.contains("binance.us"));
+        assert!(BINANCE_US_WS_COMBINED_URL.contains("binance.us"));
+    }
+}

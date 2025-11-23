@@ -604,3 +604,241 @@ pub mod converters {
         }
     }
 }
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::traits::{OrderType, Side, TimeInForce};
+
+    // -------------------------------------------------------------------------
+    // Authentication Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_auth_new() {
+        let auth = KrakenAuth::new("api_key".to_string(), "api_secret".to_string());
+        assert_eq!(auth.api_key, "api_key");
+        assert_eq!(auth.api_secret, "api_secret");
+    }
+
+    #[test]
+    fn test_auth_sign_request_with_valid_base64_secret() {
+        // Use a valid base64-encoded secret
+        let secret = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, b"test_secret_key");
+        let auth = KrakenAuth::new("api_key".to_string(), secret);
+        let result = auth.sign_request("/0/private/Balance", 1234567890000, "nonce=1234567890000");
+        assert!(result.is_ok());
+        let signature = result.unwrap();
+        // Signature should be base64-encoded
+        assert!(!signature.is_empty());
+    }
+
+    #[test]
+    fn test_auth_sign_request_deterministic() {
+        let secret = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, b"test_secret");
+        let auth = KrakenAuth::new("api_key".to_string(), secret);
+        let sig1 = auth.sign_request("/0/private/Balance", 1234567890000, "nonce=1234567890000").unwrap();
+        let sig2 = auth.sign_request("/0/private/Balance", 1234567890000, "nonce=1234567890000").unwrap();
+        assert_eq!(sig1, sig2, "same input should produce same signature");
+    }
+
+    #[test]
+    fn test_auth_sign_request_different_nonces() {
+        let secret = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, b"test_secret");
+        let auth = KrakenAuth::new("api_key".to_string(), secret);
+        let sig1 = auth.sign_request("/0/private/Balance", 1234567890000, "nonce=1234567890000").unwrap();
+        let sig2 = auth.sign_request("/0/private/Balance", 1234567890001, "nonce=1234567890001").unwrap();
+        assert_ne!(sig1, sig2, "different nonces should produce different signatures");
+    }
+
+    #[test]
+    fn test_auth_sign_request_invalid_base64() {
+        let auth = KrakenAuth::new("api_key".to_string(), "not_valid_base64!!!".to_string());
+        let result = auth.sign_request("/0/private/Balance", 1234567890000, "nonce=1234567890000");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_auth_get_nonce_is_reasonable() {
+        let nonce = KrakenAuth::get_nonce();
+        let min_nonce: u64 = 1704067200000; // 2024-01-01
+        let max_nonce: u64 = 4102444800000; // 2100-01-01
+        assert!(nonce > min_nonce, "nonce {} is too old", nonce);
+        assert!(nonce < max_nonce, "nonce {} is too far in future", nonce);
+    }
+
+    #[test]
+    fn test_auth_get_nonce_increases() {
+        let nonce1 = KrakenAuth::get_nonce();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let nonce2 = KrakenAuth::get_nonce();
+        assert!(nonce2 >= nonce1, "nonce should increase over time");
+    }
+
+    // -------------------------------------------------------------------------
+    // Order Type Converter Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_to_kraken_order_type() {
+        assert_eq!(converters::to_kraken_order_type(OrderType::Limit), "limit");
+        assert_eq!(converters::to_kraken_order_type(OrderType::Market), "market");
+        assert_eq!(converters::to_kraken_order_type(OrderType::StopLoss), "stop-loss");
+        assert_eq!(converters::to_kraken_order_type(OrderType::StopLossLimit), "stop-loss-limit");
+        assert_eq!(converters::to_kraken_order_type(OrderType::TakeProfit), "take-profit");
+        assert_eq!(converters::to_kraken_order_type(OrderType::TakeProfitLimit), "take-profit-limit");
+    }
+
+    #[test]
+    fn test_from_kraken_order_type() {
+        assert!(matches!(converters::from_kraken_order_type("limit"), OrderType::Limit));
+        assert!(matches!(converters::from_kraken_order_type("market"), OrderType::Market));
+        assert!(matches!(converters::from_kraken_order_type("stop-loss"), OrderType::StopLoss));
+        assert!(matches!(converters::from_kraken_order_type("stop-loss-limit"), OrderType::StopLossLimit));
+        assert!(matches!(converters::from_kraken_order_type("take-profit"), OrderType::TakeProfit));
+        assert!(matches!(converters::from_kraken_order_type("take-profit-limit"), OrderType::TakeProfitLimit));
+    }
+
+    #[test]
+    fn test_from_kraken_order_type_unknown_defaults_to_limit() {
+        assert!(matches!(converters::from_kraken_order_type("unknown"), OrderType::Limit));
+        assert!(matches!(converters::from_kraken_order_type(""), OrderType::Limit));
+    }
+
+    // -------------------------------------------------------------------------
+    // Side Converter Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_to_kraken_side() {
+        assert_eq!(converters::to_kraken_side(Side::Buy), "buy");
+        assert_eq!(converters::to_kraken_side(Side::Sell), "sell");
+    }
+
+    #[test]
+    fn test_from_kraken_side() {
+        assert!(matches!(converters::from_kraken_side("buy"), Side::Buy));
+        assert!(matches!(converters::from_kraken_side("sell"), Side::Sell));
+        // Case insensitive
+        assert!(matches!(converters::from_kraken_side("BUY"), Side::Buy));
+        assert!(matches!(converters::from_kraken_side("SELL"), Side::Sell));
+    }
+
+    #[test]
+    fn test_from_kraken_side_unknown_defaults_to_buy() {
+        assert!(matches!(converters::from_kraken_side("unknown"), Side::Buy));
+    }
+
+    // -------------------------------------------------------------------------
+    // Time-in-Force Converter Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_to_kraken_tif() {
+        assert_eq!(converters::to_kraken_tif(TimeInForce::Gtc), "GTC");
+        assert_eq!(converters::to_kraken_tif(TimeInForce::Ioc), "IOC");
+        assert_eq!(converters::to_kraken_tif(TimeInForce::Fok), "FOK");
+    }
+
+    #[test]
+    fn test_from_kraken_tif() {
+        assert!(matches!(converters::from_kraken_tif("GTC"), TimeInForce::Gtc));
+        assert!(matches!(converters::from_kraken_tif("IOC"), TimeInForce::Ioc));
+        assert!(matches!(converters::from_kraken_tif("FOK"), TimeInForce::Fok));
+    }
+
+    #[test]
+    fn test_from_kraken_tif_unknown_defaults_to_gtc() {
+        assert!(matches!(converters::from_kraken_tif("unknown"), TimeInForce::Gtc));
+    }
+
+    // -------------------------------------------------------------------------
+    // REST Client Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_rest_client_new_spot() {
+        let client = KrakenRestClient::new_spot(None);
+        assert_eq!(client.base_url, KRAKEN_SPOT_REST_URL);
+    }
+
+    #[test]
+    fn test_rest_client_new_futures() {
+        let client = KrakenRestClient::new_futures(None);
+        assert_eq!(client.base_url, KRAKEN_FUTURES_REST_URL);
+    }
+
+    #[test]
+    fn test_rest_client_with_auth() {
+        let auth = KrakenAuth::new("key".to_string(), "secret".to_string());
+        let client = KrakenRestClient::new_spot(Some(auth));
+        assert!(client.auth.is_some());
+    }
+
+    // -------------------------------------------------------------------------
+    // Response Type Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_kraken_response_into_result_success() {
+        let response: KrakenResponse<String> = KrakenResponse {
+            error: vec![],
+            result: Some("test_data".to_string()),
+        };
+        let result = response.into_result();
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "test_data");
+    }
+
+    #[test]
+    fn test_kraken_response_into_result_with_errors() {
+        let response: KrakenResponse<String> = KrakenResponse {
+            error: vec!["EOrder:Insufficient funds".to_string()],
+            result: None,
+        };
+        let result = response.into_result();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Insufficient funds"));
+    }
+
+    #[test]
+    fn test_kraken_response_missing_result() {
+        let response: KrakenResponse<String> = KrakenResponse {
+            error: vec![],
+            result: None,
+        };
+        let result = response.into_result();
+        assert!(result.is_err());
+    }
+
+    // -------------------------------------------------------------------------
+    // URL Constants Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_kraken_urls_are_valid() {
+        assert!(KRAKEN_SPOT_REST_URL.starts_with("https://"));
+        assert!(KRAKEN_SPOT_WS_URL.starts_with("wss://"));
+        assert!(KRAKEN_SPOT_WS_AUTH_URL.starts_with("wss://"));
+        assert!(KRAKEN_FUTURES_REST_URL.starts_with("https://"));
+        assert!(KRAKEN_FUTURES_WS_URL.starts_with("wss://"));
+    }
+
+    #[test]
+    fn test_kraken_urls_contain_kraken() {
+        assert!(KRAKEN_SPOT_REST_URL.contains("kraken"));
+        assert!(KRAKEN_SPOT_WS_URL.contains("kraken"));
+        assert!(KRAKEN_SPOT_WS_AUTH_URL.contains("kraken"));
+        assert!(KRAKEN_FUTURES_REST_URL.contains("kraken"));
+        assert!(KRAKEN_FUTURES_WS_URL.contains("kraken"));
+    }
+
+    #[test]
+    fn test_kraken_auth_ws_url_different_from_public() {
+        assert_ne!(KRAKEN_SPOT_WS_URL, KRAKEN_SPOT_WS_AUTH_URL);
+    }
+}

@@ -37,6 +37,8 @@ serde_json = { workspace = true }
 dotenvy = "0.15"
 uuid = { version = "1.0", features = ["v4"] }
 oms = { path = "../oms" }
+inventory = { path = "../inventory" }
+risk = { path = "../risk" }
 async-trait = { workspace = true }
 futures = "0.3"
 

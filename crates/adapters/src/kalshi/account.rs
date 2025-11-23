@@ -353,3 +353,229 @@ pub mod converters {
         (price * 100.0).round() as i32
     }
 }
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::traits::{OrderStatus, OrderType, Side, TimeInForce};
+
+    // -------------------------------------------------------------------------
+    // Converter Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_to_kalshi_action_buy() {
+        assert_eq!(converters::to_kalshi_action(Side::Buy), "buy");
+    }
+
+    #[test]
+    fn test_to_kalshi_action_sell() {
+        assert_eq!(converters::to_kalshi_action(Side::Sell), "sell");
+    }
+
+    #[test]
+    fn test_from_kalshi_action_buy() {
+        assert!(matches!(converters::from_kalshi_action("buy"), Side::Buy));
+        assert!(matches!(converters::from_kalshi_action("BUY"), Side::Buy));
+        assert!(matches!(converters::from_kalshi_action("Buy"), Side::Buy));
+    }
+
+    #[test]
+    fn test_from_kalshi_action_sell() {
+        assert!(matches!(converters::from_kalshi_action("sell"), Side::Sell));
+        assert!(matches!(converters::from_kalshi_action("SELL"), Side::Sell));
+    }
+
+    #[test]
+    fn test_from_kalshi_action_unknown_defaults_to_buy() {
+        assert!(matches!(converters::from_kalshi_action("unknown"), Side::Buy));
+        assert!(matches!(converters::from_kalshi_action(""), Side::Buy));
+    }
+
+    #[test]
+    fn test_to_kalshi_order_type_limit() {
+        assert_eq!(converters::to_kalshi_order_type(OrderType::Limit), "limit");
+    }
+
+    #[test]
+    fn test_to_kalshi_order_type_market() {
+        assert_eq!(converters::to_kalshi_order_type(OrderType::Market), "market");
+    }
+
+    #[test]
+    fn test_to_kalshi_order_type_stop_defaults_to_limit() {
+        assert_eq!(converters::to_kalshi_order_type(OrderType::StopLoss), "limit");
+        assert_eq!(converters::to_kalshi_order_type(OrderType::StopLossLimit), "limit");
+    }
+
+    #[test]
+    fn test_from_kalshi_order_type_limit() {
+        assert!(matches!(converters::from_kalshi_order_type("limit"), OrderType::Limit));
+        assert!(matches!(converters::from_kalshi_order_type("LIMIT"), OrderType::Limit));
+    }
+
+    #[test]
+    fn test_from_kalshi_order_type_market() {
+        assert!(matches!(converters::from_kalshi_order_type("market"), OrderType::Market));
+    }
+
+    #[test]
+    fn test_from_kalshi_order_type_unknown_defaults_to_limit() {
+        assert!(matches!(converters::from_kalshi_order_type("unknown"), OrderType::Limit));
+    }
+
+    #[test]
+    fn test_to_kalshi_tif_gtc() {
+        assert_eq!(converters::to_kalshi_tif(TimeInForce::Gtc), None);
+    }
+
+    #[test]
+    fn test_to_kalshi_tif_ioc() {
+        assert_eq!(converters::to_kalshi_tif(TimeInForce::Ioc), Some("ioc"));
+    }
+
+    #[test]
+    fn test_to_kalshi_tif_fok() {
+        assert_eq!(converters::to_kalshi_tif(TimeInForce::Fok), Some("fok"));
+    }
+
+    #[test]
+    fn test_from_kalshi_order_status_new() {
+        assert!(matches!(converters::from_kalshi_order_status("resting"), OrderStatus::New));
+        assert!(matches!(converters::from_kalshi_order_status("pending"), OrderStatus::New));
+        assert!(matches!(converters::from_kalshi_order_status("RESTING"), OrderStatus::New));
+    }
+
+    #[test]
+    fn test_from_kalshi_order_status_filled() {
+        assert!(matches!(converters::from_kalshi_order_status("executed"), OrderStatus::Filled));
+        assert!(matches!(converters::from_kalshi_order_status("filled"), OrderStatus::Filled));
+        assert!(matches!(converters::from_kalshi_order_status("FILLED"), OrderStatus::Filled));
+    }
+
+    #[test]
+    fn test_from_kalshi_order_status_canceled() {
+        assert!(matches!(converters::from_kalshi_order_status("canceled"), OrderStatus::Canceled));
+        assert!(matches!(converters::from_kalshi_order_status("cancelled"), OrderStatus::Canceled));
+    }
+
+    #[test]
+    fn test_from_kalshi_order_status_partial() {
+        assert!(matches!(converters::from_kalshi_order_status("partial"), OrderStatus::PartiallyFilled));
+    }
+
+    #[test]
+    fn test_from_kalshi_order_status_unknown_defaults_to_new() {
+        assert!(matches!(converters::from_kalshi_order_status("unknown"), OrderStatus::New));
+        assert!(matches!(converters::from_kalshi_order_status(""), OrderStatus::New));
+    }
+
+    // -------------------------------------------------------------------------
+    // Price Conversion Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_cents_to_price() {
+        assert_eq!(converters::cents_to_price(50), 0.50);
+        assert_eq!(converters::cents_to_price(1), 0.01);
+        assert_eq!(converters::cents_to_price(99), 0.99);
+        assert_eq!(converters::cents_to_price(0), 0.0);
+    }
+
+    #[test]
+    fn test_price_to_cents() {
+        assert_eq!(converters::price_to_cents(0.50), 50);
+        assert_eq!(converters::price_to_cents(0.01), 1);
+        assert_eq!(converters::price_to_cents(0.99), 99);
+        assert_eq!(converters::price_to_cents(0.0), 0);
+    }
+
+    #[test]
+    fn test_price_conversion_roundtrip() {
+        for cents in [1, 25, 50, 75, 99] {
+            let price = converters::cents_to_price(cents);
+            let back = converters::price_to_cents(price);
+            assert_eq!(back, cents, "roundtrip failed for cents={}", cents);
+        }
+    }
+
+    #[test]
+    fn test_price_to_cents_rounds_correctly() {
+        // 0.505 should round to 51 (banker's rounding or standard rounding)
+        assert_eq!(converters::price_to_cents(0.505), 51);
+        // 0.504 should round to 50
+        assert_eq!(converters::price_to_cents(0.504), 50);
+    }
+
+    // -------------------------------------------------------------------------
+    // REST Client Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_rest_client_new_production() {
+        let client = KalshiRestClient::new(None);
+        assert_eq!(client.base_url, KALSHI_REST_URL);
+    }
+
+    #[test]
+    fn test_rest_client_new_demo() {
+        let client = KalshiRestClient::new_demo(None);
+        assert_eq!(client.base_url, KALSHI_REST_URL_DEMO);
+    }
+
+    #[test]
+    fn test_rest_client_ws_url_production() {
+        let client = KalshiRestClient::new(None);
+        assert_eq!(client.ws_url(), KALSHI_WS_URL);
+    }
+
+    #[test]
+    fn test_rest_client_ws_url_demo() {
+        let client = KalshiRestClient::new_demo(None);
+        assert_eq!(client.ws_url(), KALSHI_WS_URL_DEMO);
+    }
+
+    // -------------------------------------------------------------------------
+    // URL Constants Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_kalshi_urls_are_valid() {
+        assert!(KALSHI_REST_URL.starts_with("https://"));
+        assert!(KALSHI_REST_URL_DEMO.starts_with("https://"));
+        assert!(KALSHI_WS_URL.starts_with("wss://"));
+        assert!(KALSHI_WS_URL_DEMO.starts_with("wss://"));
+    }
+
+    #[test]
+    fn test_demo_urls_contain_demo() {
+        assert!(KALSHI_REST_URL_DEMO.contains("demo"));
+        assert!(KALSHI_WS_URL_DEMO.contains("demo"));
+    }
+
+    // -------------------------------------------------------------------------
+    // Timestamp Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_timestamp_is_reasonable() {
+        let ts = KalshiAuth::timestamp();
+        // Should be after 2024-01-01 and before 2100-01-01
+        let min_ts: u64 = 1704067200000; // 2024-01-01
+        let max_ts: u64 = 4102444800000; // 2100-01-01
+        assert!(ts > min_ts, "timestamp {} is too old", ts);
+        assert!(ts < max_ts, "timestamp {} is too far in future", ts);
+    }
+
+    #[test]
+    fn test_timestamp_increases() {
+        let ts1 = KalshiAuth::timestamp();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let ts2 = KalshiAuth::timestamp();
+        assert!(ts2 >= ts1, "timestamp should increase");
+    }
+}

@@ -331,3 +331,261 @@ pub mod converters {
         }
     }
 }
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::traits::{OrderStatus, OrderType, Side, TimeInForce};
+
+    // -------------------------------------------------------------------------
+    // Authentication Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_auth_new() {
+        let auth = BybitAuth::new("api_key".to_string(), "api_secret".to_string());
+        assert_eq!(auth.api_key, "api_key");
+        assert_eq!(auth.api_secret, "api_secret");
+    }
+
+    #[test]
+    fn test_auth_sign_request_produces_hex_signature() {
+        let auth = BybitAuth::new("api_key".to_string(), "secret123".to_string());
+        let signature = auth.sign_request(1234567890000, 5000, "symbol=BTCUSDT");
+
+        // Signature should be hex-encoded (only hex characters)
+        assert!(!signature.is_empty());
+        assert!(signature.chars().all(|c| c.is_ascii_hexdigit()));
+        // SHA256 produces 32 bytes = 64 hex chars
+        assert_eq!(signature.len(), 64);
+    }
+
+    #[test]
+    fn test_auth_sign_request_deterministic() {
+        let auth = BybitAuth::new("api_key".to_string(), "secret123".to_string());
+        let sig1 = auth.sign_request(1234567890000, 5000, "symbol=BTCUSDT");
+        let sig2 = auth.sign_request(1234567890000, 5000, "symbol=BTCUSDT");
+        assert_eq!(sig1, sig2, "same input should produce same signature");
+    }
+
+    #[test]
+    fn test_auth_sign_request_different_timestamps() {
+        let auth = BybitAuth::new("api_key".to_string(), "secret123".to_string());
+        let sig1 = auth.sign_request(1234567890000, 5000, "symbol=BTCUSDT");
+        let sig2 = auth.sign_request(1234567890001, 5000, "symbol=BTCUSDT");
+        assert_ne!(sig1, sig2, "different timestamps should produce different signatures");
+    }
+
+    #[test]
+    fn test_auth_sign_websocket_produces_hex_signature() {
+        let auth = BybitAuth::new("api_key".to_string(), "secret123".to_string());
+        let signature = auth.sign_websocket(1234567890000);
+
+        assert!(!signature.is_empty());
+        assert!(signature.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(signature.len(), 64);
+    }
+
+    #[test]
+    fn test_auth_timestamp_is_reasonable() {
+        let ts = BybitAuth::timestamp();
+        let min_ts: u64 = 1704067200000; // 2024-01-01
+        let max_ts: u64 = 4102444800000; // 2100-01-01
+        assert!(ts > min_ts, "timestamp {} is too old", ts);
+        assert!(ts < max_ts, "timestamp {} is too far in future", ts);
+    }
+
+    // -------------------------------------------------------------------------
+    // Side Converter Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_to_bybit_side() {
+        assert_eq!(converters::to_bybit_side(Side::Buy), "Buy");
+        assert_eq!(converters::to_bybit_side(Side::Sell), "Sell");
+    }
+
+    #[test]
+    fn test_from_bybit_side() {
+        assert!(matches!(converters::from_bybit_side("Buy"), Side::Buy));
+        assert!(matches!(converters::from_bybit_side("Sell"), Side::Sell));
+    }
+
+    #[test]
+    fn test_from_bybit_side_unknown_defaults_to_buy() {
+        assert!(matches!(converters::from_bybit_side("unknown"), Side::Buy));
+        assert!(matches!(converters::from_bybit_side(""), Side::Buy));
+    }
+
+    // -------------------------------------------------------------------------
+    // Order Type Converter Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_to_bybit_order_type() {
+        assert_eq!(converters::to_bybit_order_type(OrderType::Limit), "Limit");
+        assert_eq!(converters::to_bybit_order_type(OrderType::Market), "Market");
+    }
+
+    #[test]
+    fn test_to_bybit_order_type_unsupported_defaults_to_limit() {
+        assert_eq!(converters::to_bybit_order_type(OrderType::StopLoss), "Limit");
+        assert_eq!(converters::to_bybit_order_type(OrderType::TakeProfit), "Limit");
+    }
+
+    #[test]
+    fn test_from_bybit_order_type() {
+        assert!(matches!(converters::from_bybit_order_type("Limit"), OrderType::Limit));
+        assert!(matches!(converters::from_bybit_order_type("Market"), OrderType::Market));
+    }
+
+    #[test]
+    fn test_from_bybit_order_type_unknown_defaults_to_limit() {
+        assert!(matches!(converters::from_bybit_order_type("unknown"), OrderType::Limit));
+    }
+
+    // -------------------------------------------------------------------------
+    // Time-in-Force Converter Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_to_bybit_tif() {
+        assert_eq!(converters::to_bybit_tif(TimeInForce::Gtc), "GTC");
+        assert_eq!(converters::to_bybit_tif(TimeInForce::Ioc), "IOC");
+        assert_eq!(converters::to_bybit_tif(TimeInForce::Fok), "FOK");
+    }
+
+    #[test]
+    fn test_from_bybit_tif() {
+        assert!(matches!(converters::from_bybit_tif("GTC"), TimeInForce::Gtc));
+        assert!(matches!(converters::from_bybit_tif("IOC"), TimeInForce::Ioc));
+        assert!(matches!(converters::from_bybit_tif("FOK"), TimeInForce::Fok));
+    }
+
+    #[test]
+    fn test_from_bybit_tif_unknown_defaults_to_gtc() {
+        assert!(matches!(converters::from_bybit_tif("unknown"), TimeInForce::Gtc));
+    }
+
+    // -------------------------------------------------------------------------
+    // Order Status Converter Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_from_bybit_order_status_new() {
+        assert!(matches!(converters::from_bybit_order_status("New"), OrderStatus::New));
+        assert!(matches!(converters::from_bybit_order_status("Untriggered"), OrderStatus::New));
+    }
+
+    #[test]
+    fn test_from_bybit_order_status_partial() {
+        assert!(matches!(converters::from_bybit_order_status("PartiallyFilled"), OrderStatus::PartiallyFilled));
+        assert!(matches!(converters::from_bybit_order_status("PartiallyFilledCanceled"), OrderStatus::PartiallyFilled));
+    }
+
+    #[test]
+    fn test_from_bybit_order_status_filled() {
+        assert!(matches!(converters::from_bybit_order_status("Filled"), OrderStatus::Filled));
+    }
+
+    #[test]
+    fn test_from_bybit_order_status_canceled() {
+        assert!(matches!(converters::from_bybit_order_status("Cancelled"), OrderStatus::Canceled));
+        assert!(matches!(converters::from_bybit_order_status("Canceled"), OrderStatus::Canceled));
+        assert!(matches!(converters::from_bybit_order_status("Deactivated"), OrderStatus::Canceled));
+    }
+
+    #[test]
+    fn test_from_bybit_order_status_rejected() {
+        assert!(matches!(converters::from_bybit_order_status("Rejected"), OrderStatus::Rejected));
+    }
+
+    #[test]
+    fn test_from_bybit_order_status_unknown_defaults_to_new() {
+        assert!(matches!(converters::from_bybit_order_status("unknown"), OrderStatus::New));
+    }
+
+    // -------------------------------------------------------------------------
+    // REST Client Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_rest_client_new() {
+        let client = BybitRestClient::new(None);
+        assert_eq!(client.base_url, BYBIT_REST_URL);
+        assert_eq!(client.recv_window, 5000);
+    }
+
+    #[test]
+    fn test_rest_client_with_auth() {
+        let auth = BybitAuth::new("key".to_string(), "secret".to_string());
+        let client = BybitRestClient::new(Some(auth));
+        assert!(client.auth.is_some());
+    }
+
+    // -------------------------------------------------------------------------
+    // Response Type Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_bybit_response_into_result_success() {
+        let response: BybitResponse<String> = BybitResponse {
+            ret_code: 0,
+            ret_msg: "OK".to_string(),
+            result: Some("test_data".to_string()),
+            time: Some(1234567890),
+        };
+        let result = response.into_result();
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "test_data");
+    }
+
+    #[test]
+    fn test_bybit_response_into_result_error() {
+        let response: BybitResponse<String> = BybitResponse {
+            ret_code: 10001,
+            ret_msg: "Invalid parameter".to_string(),
+            result: None,
+            time: Some(1234567890),
+        };
+        let result = response.into_result();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("10001"));
+    }
+
+    #[test]
+    fn test_bybit_response_missing_result() {
+        let response: BybitResponse<String> = BybitResponse {
+            ret_code: 0,
+            ret_msg: "OK".to_string(),
+            result: None,
+            time: Some(1234567890),
+        };
+        let result = response.into_result();
+        assert!(result.is_err());
+    }
+
+    // -------------------------------------------------------------------------
+    // URL Constants Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_bybit_urls_are_valid() {
+        assert!(BYBIT_REST_URL.starts_with("https://"));
+        assert!(BYBIT_WS_SPOT_URL.starts_with("wss://"));
+        assert!(BYBIT_WS_LINEAR_URL.starts_with("wss://"));
+        assert!(BYBIT_WS_PRIVATE_URL.starts_with("wss://"));
+    }
+
+    #[test]
+    fn test_bybit_urls_contain_bybit() {
+        assert!(BYBIT_REST_URL.contains("bybit"));
+        assert!(BYBIT_WS_SPOT_URL.contains("bybit"));
+        assert!(BYBIT_WS_LINEAR_URL.contains("bybit"));
+        assert!(BYBIT_WS_PRIVATE_URL.contains("bybit"));
+    }
+}

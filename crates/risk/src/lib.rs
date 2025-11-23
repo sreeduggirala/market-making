@@ -36,6 +36,7 @@ pub mod monitor;
 pub mod kill_switch;
 pub mod rate_limit;
 pub mod margin;
+pub mod monitoring;
 
 pub use types::*;
 pub use limits::*;
@@ -44,6 +45,7 @@ pub use monitor::*;
 pub use kill_switch::*;
 pub use rate_limit::*;
 pub use margin::*;
+pub use monitoring::*;
 
 use std::sync::Arc;
 use inventory::PositionManager;
