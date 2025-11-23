@@ -111,7 +111,7 @@ pub struct FundingRateHistory {
 // Orders & Trading
 // ============================================================================
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OrderType {
     Limit,
     Market,

@@ -16,6 +16,7 @@
 //!   KRAKEN_API_KEY     - Kraken API key
 //!   KRAKEN_API_SECRET  - Kraken API secret
 
+use adapters::binance_us::BinanceUsSpotAdapter;
 use adapters::bybit::spot::BybitSpotAdapter;
 use adapters::kalshi::spot::KalshiSpotAdapter;
 use adapters::kraken::spot::KrakenSpotAdapter;
@@ -108,6 +109,12 @@ async fn main() -> Result<()> {
             std::env::var("KALSHI_PRIVATE_KEY")
                 .expect("KALSHI_PRIVATE_KEY environment variable not set"),
         ),
+        Exchange::BinanceUs => (
+            std::env::var("BINANCE_US_API_KEY")
+                .expect("BINANCE_US_API_KEY environment variable not set"),
+            std::env::var("BINANCE_US_API_SECRET")
+                .expect("BINANCE_US_API_SECRET environment variable not set"),
+        ),
     };
 
     // =================================================================
@@ -119,10 +126,11 @@ async fn main() -> Result<()> {
     // Create exchange-specific adapter and register with OMS
     // We need to handle each exchange type separately due to type constraints
     enum ExchangeAdapterHandle {
-        Kraken(Arc<KrakenSpotAdapter>),
-        Mexc(Arc<MexcSpotAdapter>),
+        BinanceUs(Arc<BinanceUsSpotAdapter>),
         Bybit(Arc<BybitSpotAdapter>),
         Kalshi(Arc<KalshiSpotAdapter>),
+        Kraken(Arc<KrakenSpotAdapter>),
+        Mexc(Arc<MexcSpotAdapter>),
     }
 
     let (adapter, oms, adapter_handle) = match config.exchange {
@@ -178,6 +186,19 @@ async fn main() -> Result<()> {
             let adapter = Arc::new(Adapter::Spot(SpotAdapter::new(kalshi.clone() as Arc<dyn SpotWs>)));
 
             (adapter, oms, ExchangeAdapterHandle::Kalshi(kalshi))
+        }
+        Exchange::BinanceUs => {
+            let binance_us = Arc::new(BinanceUsSpotAdapter::new(api_key, api_secret));
+
+            // Create OMS and register adapter
+            let oms = Arc::new(OrderManager::new());
+            let user_stream = binance_us.subscribe_user().await?;
+            oms.register_exchange(Exchange::BinanceUs, binance_us.clone(), user_stream).await;
+
+            // Create unified adapter for strategy
+            let adapter = Arc::new(Adapter::Spot(SpotAdapter::new(binance_us.clone() as Arc<dyn SpotWs>)));
+
+            (adapter, oms, ExchangeAdapterHandle::BinanceUs(binance_us))
         }
     };
 
@@ -401,10 +422,11 @@ async fn main() -> Result<()> {
     // Shutdown adapter (closes WebSocket connections)
     info!("🔌 Disconnecting from exchange...");
     match adapter_handle {
-        ExchangeAdapterHandle::Kraken(kraken) => kraken.shutdown().await,
-        ExchangeAdapterHandle::Mexc(mexc) => mexc.shutdown().await,
+        ExchangeAdapterHandle::BinanceUs(binance_us) => binance_us.shutdown().await,
         ExchangeAdapterHandle::Bybit(bybit) => bybit.shutdown().await,
         ExchangeAdapterHandle::Kalshi(kalshi) => kalshi.shutdown().await,
+        ExchangeAdapterHandle::Kraken(kraken) => kraken.shutdown().await,
+        ExchangeAdapterHandle::Mexc(mexc) => mexc.shutdown().await,
     }
 
     // Give WebSocket a moment to close cleanly

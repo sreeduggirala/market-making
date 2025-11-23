@@ -23,19 +23,21 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Exchange identifier
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Exchange {
-    Kraken,
-    Mexc,
+    BinanceUs,
     Bybit,
     Kalshi,
+    Kraken,
+    Mexc,
 }
 
 impl std::fmt::Display for Exchange {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Exchange::Kraken => write!(f, "kraken"),
-            Exchange::Mexc => write!(f, "mexc"),
+            Exchange::BinanceUs => write!(f, "binance_us"),
             Exchange::Bybit => write!(f, "bybit"),
             Exchange::Kalshi => write!(f, "kalshi"),
+            Exchange::Kraken => write!(f, "kraken"),
+            Exchange::Mexc => write!(f, "mexc"),
         }
     }
 }
