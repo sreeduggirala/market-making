@@ -136,8 +136,14 @@ impl MexcAuth {
         use hmac::{Hmac, Mac};
         use sha2::Sha256;
 
-        let mut mac = Hmac::<Sha256>::new_from_slice(self.api_secret.as_bytes())
-            .expect("HMAC can take key of any size");
+        // HMAC-SHA256 accepts keys of any size, this should never fail
+        let mut mac = match Hmac::<Sha256>::new_from_slice(self.api_secret.as_bytes()) {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::error!("HMAC initialization failed: {}", e);
+                return String::new();
+            }
+        };
         mac.update(query_string.as_bytes());
         let result = mac.finalize();
         hex::encode(result.into_bytes())
@@ -159,8 +165,11 @@ impl MexcAuth {
     pub fn get_timestamp() -> u64 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or_else(|e| {
+                tracing::error!("System time error: {}", e);
+                0
+            })
     }
 }
 
@@ -200,7 +209,10 @@ impl MexcRestClient {
             .connect_timeout(Duration::from_secs(10))
             .tcp_keepalive(Duration::from_secs(60))
             .build()
-            .expect("Failed to build HTTP client")
+            .unwrap_or_else(|e| {
+                tracing::error!("Failed to build HTTP client, using default: {}", e);
+                Client::new()
+            })
     }
 
     /// Creates a new HTTP client configured for MEXC Spot REST API

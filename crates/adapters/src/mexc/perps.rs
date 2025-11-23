@@ -247,13 +247,14 @@ impl MexcPerpsAdapter {
     ///
     /// Format: `mm_{timestamp}` where timestamp is milliseconds since Unix epoch.
     fn generate_client_order_id() -> String {
-        format!(
-            "mm_{}",
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_millis()
-        )
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or_else(|e| {
+                tracing::error!("System time error: {}", e);
+                0
+            });
+        format!("mm_{}", timestamp)
     }
 
     /// Converts Side and reduce_only flag to MEXC position side integer
@@ -378,8 +379,11 @@ impl PerpRest for MexcPerpsAdapter {
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or_else(|e| {
+                tracing::error!("System time error: {}", e);
+                0
+            });
 
         Ok(Order {
             venue_order_id: response.data,
@@ -480,8 +484,11 @@ impl PerpRest for MexcPerpsAdapter {
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or_else(|e| {
+                tracing::error!("System time error: {}", e);
+                0
+            });
 
         let data = response.data;
         let qty: Quantity = data.vol.parse().unwrap_or(0.0);
@@ -566,8 +573,11 @@ impl PerpRest for MexcPerpsAdapter {
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or_else(|e| {
+                tracing::error!("System time error: {}", e);
+                0
+            });
 
         Ok(response
             .data
@@ -770,8 +780,11 @@ impl PerpRest for MexcPerpsAdapter {
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or_else(|e| {
+                tracing::error!("System time error: {}", e);
+                0
+            });
 
         Ok(response
             .data
@@ -890,8 +903,11 @@ impl PerpRest for MexcPerpsAdapter {
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or_else(|e| {
+                tracing::error!("System time error: {}", e);
+                0
+            });
 
         Ok(AccountInfo {
             balances,
@@ -1085,8 +1101,11 @@ impl PerpRest for MexcPerpsAdapter {
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or_else(|e| {
+                tracing::error!("System time error: {}", e);
+                0
+            });
 
         let last_price: f64 = data.last_price.parse().unwrap_or(0.0);
         let change_pct: f64 = data.rise_fall_rate.parse().unwrap_or(0.0);
@@ -1143,8 +1162,11 @@ impl PerpRest for MexcPerpsAdapter {
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or_else(|e| {
+                tracing::error!("System time error: {}", e);
+                0
+            });
 
         let mut tickers: Vec<TickerInfo> = response
             .data
@@ -1817,8 +1839,11 @@ fn parse_futures_user_event(text: &str) -> Result<UserEvent> {
     let msg: FuturesUserMessage = serde_json::from_str(text)?;
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64;
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or_else(|e| {
+            tracing::error!("System time error: {}", e);
+            0
+        });
 
     if let Some(channel) = msg.channel {
         match channel.as_str() {
@@ -1988,8 +2013,11 @@ fn parse_futures_book_update(text: &str, seq: &mut u64) -> Result<BookUpdate> {
     let msg: DepthMessage = serde_json::from_str(text)?;
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64;
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or_else(|e| {
+            tracing::error!("System time error: {}", e);
+            0
+        });
 
     if let (Some(_channel), Some(symbol), Some(data)) = (msg.channel, msg.symbol, msg.data) {
         let bids: Vec<(Price, Quantity)> = data
@@ -2052,8 +2080,11 @@ fn parse_futures_trade_event(text: &str) -> Result<TradeEvent> {
     let msg: TradeMessage = serde_json::from_str(text)?;
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64;
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or_else(|e| {
+            tracing::error!("System time error: {}", e);
+            0
+        });
 
     if let (Some(_channel), Some(symbol), Some(data)) = (msg.channel, msg.symbol, msg.data) {
         return Ok(TradeEvent {

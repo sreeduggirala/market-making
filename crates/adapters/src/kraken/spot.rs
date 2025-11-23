@@ -99,7 +99,37 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
+
+/// Parses a string to f64, logging a warning if parsing fails.
+/// Returns 0.0 on failure (which should be caught by validation).
+fn parse_f64_or_warn(s: &str, field_name: &str) -> f64 {
+    s.parse::<f64>().unwrap_or_else(|e| {
+        warn!("Failed to parse {} '{}': {}", field_name, s, e);
+        0.0
+    })
+}
+
+/// Parses an optional string to f64, logging a warning if parsing fails.
+fn parse_optional_f64(s: Option<&str>, field_name: &str) -> Option<f64> {
+    s.and_then(|val| {
+        val.parse::<f64>().map_err(|e| {
+            warn!("Failed to parse {} '{}': {}", field_name, val, e);
+            e
+        }).ok()
+    })
+}
+
+/// Gets current time in milliseconds, returning 0 if system time is unavailable.
+fn safe_now_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or_else(|e| {
+            error!("System time error: {}", e);
+            0
+        })
+}
 
 /// Type alias for WebSocket stream over TLS
 type WsStream = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
@@ -304,10 +334,7 @@ impl KrakenSpotAdapter {
     ///
     /// "mm" prefix stands for "market maker" and helps identify orders from this system.
     fn generate_client_order_id() -> String {
-        format!("mm_{}", SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis())
+        format!("mm_{}", safe_now_millis())
     }
 }
 
@@ -415,10 +442,7 @@ fn parse_kraken_status(status: &str) -> OrderStatus {
 }
 
 fn now_millis() -> UnixMillis {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64
+    safe_now_millis()
 }
 
 #[async_trait::async_trait]
@@ -547,8 +571,8 @@ impl SpotRest for KrakenSpotAdapter {
             .context("Order not found")?;
 
         let now = now_millis();
-        let filled = details.vol_exec.parse::<f64>().unwrap_or(0.0);
-        let total = details.vol.parse::<f64>().unwrap_or(0.0);
+        let filled = parse_f64_or_warn(&details.vol_exec, "vol_exec");
+        let total = parse_f64_or_warn(&details.vol, "vol");
 
         Ok(Order {
             venue_order_id: order_id.clone(),
@@ -557,7 +581,7 @@ impl SpotRest for KrakenSpotAdapter {
             ord_type: converters::from_kraken_order_type(&details.ordertype),
             side: converters::from_kraken_side(&details.side),
             qty: total,
-            price: Some(details.price.parse().unwrap_or(0.0)),
+            price: Some(parse_f64_or_warn(&details.price, "price")),
             stop_price: None,
             tif: None,
             status: parse_kraken_status(&details.status),
@@ -589,8 +613,8 @@ impl SpotRest for KrakenSpotAdapter {
         let mut orders = Vec::new();
 
         for (order_id, details) in orders_map {
-            let filled = details.vol_exec.parse::<f64>().unwrap_or(0.0);
-            let total = details.vol.parse::<f64>().unwrap_or(0.0);
+            let filled = parse_f64_or_warn(&details.vol_exec, "vol_exec");
+            let total = parse_f64_or_warn(&details.vol, "vol");
 
             orders.push(Order {
                 venue_order_id: order_id.clone(),
@@ -599,7 +623,7 @@ impl SpotRest for KrakenSpotAdapter {
                 ord_type: converters::from_kraken_order_type(&details.ordertype),
                 side: converters::from_kraken_side(&details.side),
                 qty: total,
-                price: Some(details.price.parse().unwrap_or(0.0)),
+                price: Some(parse_f64_or_warn(&details.price, "price")),
                 stop_price: None,
                 tif: None,
                 status: parse_kraken_status(&details.status),
@@ -694,7 +718,7 @@ impl SpotRest for KrakenSpotAdapter {
         let mut balances = Vec::new();
 
         for (asset, amount_str) in result.balances {
-            let amount = amount_str.parse::<f64>().unwrap_or(0.0);
+            let amount = parse_f64_or_warn(&amount_str, &format!("balance_{}", asset));
             balances.push(Balance {
                 asset,
                 free: amount, // Kraken doesn't distinguish free/locked in Balance endpoint
@@ -750,11 +774,11 @@ impl SpotRest for KrakenSpotAdapter {
             base_asset: info.base.clone(),
             quote_asset: info.quote.clone(),
             status,
-            min_qty: info.ordermin.parse().unwrap_or(0.0),
+            min_qty: parse_f64_or_warn(&info.ordermin, "ordermin"),
             max_qty: f64::MAX,
             step_size: 10f64.powi(-(info.pair_decimals as i32)),
             tick_size: 10f64.powi(-(info.pair_decimals as i32)),
-            min_notional: info.costmin.as_ref().and_then(|s| s.parse().ok()).unwrap_or(0.0),
+            min_notional: parse_optional_f64(info.costmin.as_deref(), "costmin").unwrap_or(0.0),
             max_leverage: None, // Would need separate API call
             is_spot: true,
             is_perp: false,
@@ -780,11 +804,11 @@ impl SpotRest for KrakenSpotAdapter {
                 base_asset: info.base.clone(),
                 quote_asset: info.quote.clone(),
                 status,
-                min_qty: info.ordermin.parse().unwrap_or(0.0),
+                min_qty: parse_f64_or_warn(&info.ordermin, "ordermin"),
                 max_qty: f64::MAX,
                 step_size: 10f64.powi(-(info.pair_decimals as i32)),
                 tick_size: 10f64.powi(-(info.pair_decimals as i32)),
-                min_notional: info.costmin.as_ref().and_then(|s| s.parse().ok()).unwrap_or(0.0),
+                min_notional: parse_optional_f64(info.costmin.as_deref(), "costmin").unwrap_or(0.0),
                 max_leverage: None,
                 is_spot: true,
                 is_perp: false,
@@ -811,8 +835,8 @@ impl SpotRest for KrakenSpotAdapter {
         let (_, ticker) = result.tickers.iter().next()
             .context("Symbol not found")?;
 
-        let last_price = ticker.c[0].parse().unwrap_or(0.0);
-        let open_price = ticker.o.parse().unwrap_or(0.0);
+        let last_price = parse_f64_or_warn(&ticker.c[0], "last_price");
+        let open_price = parse_f64_or_warn(&ticker.o, "open_price");
         let price_change = last_price - open_price;
         let price_change_pct = if open_price > 0.0 {
             (price_change / open_price) * 100.0
@@ -823,13 +847,13 @@ impl SpotRest for KrakenSpotAdapter {
         Ok(TickerInfo {
             symbol: symbol.to_string(),
             last_price,
-            bid_price: ticker.b[0].parse().unwrap_or(0.0),
-            ask_price: ticker.a[0].parse().unwrap_or(0.0),
-            volume_24h: ticker.v[1].parse().unwrap_or(0.0),
+            bid_price: parse_f64_or_warn(&ticker.b[0], "bid_price"),
+            ask_price: parse_f64_or_warn(&ticker.a[0], "ask_price"),
+            volume_24h: parse_f64_or_warn(&ticker.v[1], "volume_24h"),
             price_change_24h: price_change,
             price_change_pct_24h: price_change_pct,
-            high_24h: ticker.h[1].parse().unwrap_or(0.0),
-            low_24h: ticker.l[1].parse().unwrap_or(0.0),
+            high_24h: parse_f64_or_warn(&ticker.h[1], "high_24h"),
+            low_24h: parse_f64_or_warn(&ticker.l[1], "low_24h"),
             open_price_24h: open_price,
             ts_ms: now_millis(),
         })
@@ -855,8 +879,8 @@ impl SpotRest for KrakenSpotAdapter {
         let mut tickers = Vec::new();
 
         for (symbol, ticker) in result.tickers {
-            let last_price = ticker.c[0].parse().unwrap_or(0.0);
-            let open_price = ticker.o.parse().unwrap_or(0.0);
+            let last_price = parse_f64_or_warn(&ticker.c[0], "last_price");
+            let open_price = parse_f64_or_warn(&ticker.o, "open_price");
             let price_change = last_price - open_price;
             let price_change_pct = if open_price > 0.0 {
                 (price_change / open_price) * 100.0
@@ -867,13 +891,13 @@ impl SpotRest for KrakenSpotAdapter {
             tickers.push(TickerInfo {
                 symbol,
                 last_price,
-                bid_price: ticker.b[0].parse().unwrap_or(0.0),
-                ask_price: ticker.a[0].parse().unwrap_or(0.0),
-                volume_24h: ticker.v[1].parse().unwrap_or(0.0),
+                bid_price: parse_f64_or_warn(&ticker.b[0], "bid_price"),
+                ask_price: parse_f64_or_warn(&ticker.a[0], "ask_price"),
+                volume_24h: parse_f64_or_warn(&ticker.v[1], "volume_24h"),
                 price_change_24h: price_change,
                 price_change_pct_24h: price_change_pct,
-                high_24h: ticker.h[1].parse().unwrap_or(0.0),
-                low_24h: ticker.l[1].parse().unwrap_or(0.0),
+                high_24h: parse_f64_or_warn(&ticker.h[1], "high_24h"),
+                low_24h: parse_f64_or_warn(&ticker.l[1], "low_24h"),
                 open_price_24h: open_price,
                 ts_ms: now_millis(),
             });
@@ -923,19 +947,25 @@ impl SpotRest for KrakenSpotAdapter {
                 continue;
             }
 
-            let open_time = candle[0].as_u64().unwrap_or(0) * 1000;
+            let open_time = candle[0].as_u64().unwrap_or_else(|| {
+                warn!("Failed to parse kline open_time");
+                0
+            }) * 1000;
 
             klines.push(Kline {
                 symbol: symbol.to_string(),
                 open_ms: open_time,
                 close_ms: open_time + (interval_mins as u64 * 60 * 1000),
-                open: candle[1].as_str().and_then(|s| s.parse().ok()).unwrap_or(0.0),
-                high: candle[2].as_str().and_then(|s| s.parse().ok()).unwrap_or(0.0),
-                low: candle[3].as_str().and_then(|s| s.parse().ok()).unwrap_or(0.0),
-                close: candle[4].as_str().and_then(|s| s.parse().ok()).unwrap_or(0.0),
-                volume: candle[6].as_str().and_then(|s| s.parse().ok()).unwrap_or(0.0),
+                open: parse_optional_f64(candle[1].as_str(), "kline_open").unwrap_or(0.0),
+                high: parse_optional_f64(candle[2].as_str(), "kline_high").unwrap_or(0.0),
+                low: parse_optional_f64(candle[3].as_str(), "kline_low").unwrap_or(0.0),
+                close: parse_optional_f64(candle[4].as_str(), "kline_close").unwrap_or(0.0),
+                volume: parse_optional_f64(candle[6].as_str(), "kline_volume").unwrap_or(0.0),
                 quote_volume: 0.0, // Kraken doesn't provide this directly
-                trades: candle[7].as_u64().unwrap_or(0),
+                trades: candle[7].as_u64().unwrap_or_else(|| {
+                    warn!("Failed to parse kline trades");
+                    0
+                }),
             });
         }
 
@@ -1111,10 +1141,7 @@ impl KrakenSpotAdapter {
     }
 
     fn now_millis() -> UnixMillis {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64
+        safe_now_millis()
     }
 
     async fn handle_user_message(text: &str, tx: &mpsc::Sender<UserEvent>) -> Result<()> {
@@ -1144,8 +1171,8 @@ impl KrakenSpotAdapter {
                             ) {
                                 let _ = tx.send(UserEvent::Balance {
                                     asset: asset.to_string(),
-                                    free: free.parse().unwrap_or(0.0),
-                                    locked: locked.parse().unwrap_or(0.0),
+                                    free: parse_f64_or_warn(free, "ws_balance_free"),
+                                    locked: parse_f64_or_warn(locked, "ws_balance_locked"),
                                     ex_ts_ms: Self::now_millis(),
                                     recv_ms: Self::now_millis(),
                                 }).await;
@@ -1200,11 +1227,8 @@ impl KrakenSpotAdapter {
 
     fn kraken_order_to_user_event(order: KrakenWsOrder) -> Result<UserEvent> {
         // Use cum_qty (cumulative quantity) for filled amount
-        let filled_qty = order.cum_qty
-            .as_ref()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0.0);
-        let total_qty = order.order_qty.parse().unwrap_or(0.0);
+        let filled_qty = parse_optional_f64(order.cum_qty.as_deref(), "ws_cum_qty").unwrap_or(0.0);
+        let total_qty = parse_f64_or_warn(&order.order_qty, "ws_order_qty");
 
         // Map Kraken order status to internal status
         // Kraken v2 statuses: pending_new, new, partially_filled, filled, canceled, expired
@@ -1227,8 +1251,8 @@ impl KrakenSpotAdapter {
             ord_type: converters::from_kraken_order_type(&order.order_type),
             side: converters::from_kraken_side(&order.side),
             qty: total_qty,
-            price: order.limit_price.and_then(|p| p.parse().ok()),
-            stop_price: order.stop_price.and_then(|p| p.parse().ok()),
+            price: parse_optional_f64(order.limit_price.as_deref(), "ws_limit_price"),
+            stop_price: parse_optional_f64(order.stop_price.as_deref(), "ws_stop_price"),
             tif: None,
             status,
             filled_qty,
@@ -1246,8 +1270,8 @@ impl KrakenSpotAdapter {
         let mut bids = Vec::new();
         for bid in book.bids {
             if bid.len() >= 2 {
-                let price = bid[0].parse().unwrap_or(0.0);
-                let qty = bid[1].parse().unwrap_or(0.0);
+                let price = parse_f64_or_warn(&bid[0], "ws_book_bid_price");
+                let qty = parse_f64_or_warn(&bid[1], "ws_book_bid_qty");
                 bids.push((price, qty));
             }
         }
@@ -1255,8 +1279,8 @@ impl KrakenSpotAdapter {
         let mut asks = Vec::new();
         for ask in book.asks {
             if ask.len() >= 2 {
-                let price = ask[0].parse().unwrap_or(0.0);
-                let qty = ask[1].parse().unwrap_or(0.0);
+                let price = parse_f64_or_warn(&ask[0], "ws_book_ask_price");
+                let qty = parse_f64_or_warn(&ask[1], "ws_book_ask_qty");
                 asks.push((price, qty));
             }
         }
@@ -1280,8 +1304,8 @@ impl KrakenSpotAdapter {
 
         Ok(TradeEvent {
             symbol: trade.symbol,
-            px: trade.price.parse().unwrap_or(0.0),
-            qty: trade.qty.parse().unwrap_or(0.0),
+            px: parse_f64_or_warn(&trade.price, "ws_trade_price"),
+            qty: parse_f64_or_warn(&trade.qty, "ws_trade_qty"),
             taker_is_buy: trade.side.to_lowercase() == "buy",
             ex_ts_ms: now,
             recv_ms: now,

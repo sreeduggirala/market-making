@@ -69,8 +69,11 @@ impl BybitPerpsAdapter {
     fn now_millis() -> u64 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or_else(|e| {
+                tracing::error!("System time error: {}", e);
+                0
+            })
     }
 
     /// Wraps REST API calls with rate limiting and circuit breaker
@@ -1680,8 +1683,11 @@ fn interval_to_ms(interval: KlineInterval) -> u64 {
 fn now_millis() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or_else(|e| {
+            tracing::error!("System time error: {}", e);
+            0
+        })
 }
 
 // =============================================================================

@@ -23,6 +23,35 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tracing::{debug, error, info, warn};
 
+/// Parses a string to f64, logging a warning if parsing fails.
+fn parse_f64_or_warn(s: &str, field_name: &str) -> f64 {
+    s.parse::<f64>().unwrap_or_else(|e| {
+        warn!("Failed to parse {} '{}': {}", field_name, s, e);
+        0.0
+    })
+}
+
+/// Parses an optional string to f64, logging a warning if parsing fails.
+fn parse_optional_f64(s: Option<&str>, field_name: &str) -> Option<f64> {
+    s.and_then(|val| {
+        val.parse::<f64>().map_err(|e| {
+            warn!("Failed to parse {} '{}': {}", field_name, val, e);
+            e
+        }).ok()
+    })
+}
+
+/// Gets current time in milliseconds, returning 0 if system time is unavailable.
+fn safe_now_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or_else(|e| {
+            error!("System time error: {}", e);
+            0
+        })
+}
+
 /// Bybit Spot adapter combining REST and WebSocket
 #[derive(Clone)]
 pub struct BybitSpotAdapter {
@@ -56,10 +85,7 @@ impl BybitSpotAdapter {
     }
 
     fn now_millis() -> u64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64
+        safe_now_millis()
     }
 
     /// Wraps REST API calls with rate limiting and circuit breaker
@@ -303,8 +329,8 @@ impl SpotRest for BybitSpotAdapter {
         let order = result.list.first().context("Order not found")?;
         let now = Self::now_millis();
 
-        let qty: f64 = order.qty.parse().unwrap_or(0.0);
-        let filled: f64 = order.cum_exec_qty.parse().unwrap_or(0.0);
+        let qty = parse_f64_or_warn(&order.qty, "order_qty");
+        let filled = parse_f64_or_warn(&order.cum_exec_qty, "cum_exec_qty");
 
         Ok(Order {
             venue_order_id: order.order_id.clone(),
@@ -313,14 +339,14 @@ impl SpotRest for BybitSpotAdapter {
             ord_type: converters::from_bybit_order_type(&order.order_type),
             side: converters::from_bybit_side(&order.side),
             qty,
-            price: order.price.parse().ok(),
+            price: parse_optional_f64(Some(&order.price), "order_price"),
             stop_price: None,
             tif: None,
             status: converters::from_bybit_order_status(&order.order_status),
             filled_qty: filled,
             remaining_qty: qty - filled,
-            created_ms: order.created_time.parse().unwrap_or(now),
-            updated_ms: order.updated_time.parse().unwrap_or(now),
+            created_ms: parse_f64_or_warn(&order.created_time, "created_time") as u64,
+            updated_ms: parse_f64_or_warn(&order.updated_time, "updated_time") as u64,
             recv_ms: now,
             raw_status: Some(order.order_status.clone()),
         })
@@ -375,8 +401,8 @@ impl SpotRest for BybitSpotAdapter {
             .list
             .into_iter()
             .map(|order| {
-                let qty: f64 = order.qty.parse().unwrap_or(0.0);
-                let filled: f64 = order.cum_exec_qty.parse().unwrap_or(0.0);
+                let qty = parse_f64_or_warn(&order.qty, "order_qty");
+                let filled = parse_f64_or_warn(&order.cum_exec_qty, "cum_exec_qty");
 
                 Order {
                     venue_order_id: order.order_id,
@@ -385,14 +411,14 @@ impl SpotRest for BybitSpotAdapter {
                     ord_type: converters::from_bybit_order_type(&order.order_type),
                     side: converters::from_bybit_side(&order.side),
                     qty,
-                    price: order.price.parse().ok(),
+                    price: parse_optional_f64(Some(&order.price), "order_price"),
                     stop_price: None,
                     tif: None,
                     status: converters::from_bybit_order_status(&order.order_status),
                     filled_qty: filled,
                     remaining_qty: qty - filled,
-                    created_ms: order.created_time.parse().unwrap_or(now),
-                    updated_ms: order.updated_time.parse().unwrap_or(now),
+                    created_ms: parse_f64_or_warn(&order.created_time, "created_time") as u64,
+                    updated_ms: parse_f64_or_warn(&order.updated_time, "updated_time") as u64,
                     recv_ms: now,
                     raw_status: Some(order.order_status),
                 }
@@ -514,8 +540,8 @@ impl SpotRest for BybitSpotAdapter {
                 a.coin
                     .iter()
                     .map(|c| {
-                        let free: f64 = c.available.parse().unwrap_or(0.0);
-                        let locked: f64 = c.locked.parse().unwrap_or(0.0);
+                        let free = parse_f64_or_warn(&c.available, "balance_available");
+                        let locked = parse_f64_or_warn(&c.locked, "balance_locked");
                         Balance {
                             asset: c.coin.clone(),
                             free,
@@ -598,10 +624,10 @@ impl SpotRest for BybitSpotAdapter {
             base_asset: info.base_coin.clone(),
             quote_asset: info.quote_coin.clone(),
             status: MarketStatus::Trading,
-            min_qty: info.lot_size_filter.min_order_qty.parse().unwrap_or(0.0),
-            max_qty: info.lot_size_filter.max_order_qty.parse().unwrap_or(f64::MAX),
-            step_size: info.lot_size_filter.base_precision.parse().unwrap_or(0.0),
-            tick_size: info.price_filter.tick_size.parse().unwrap_or(0.0),
+            min_qty: parse_f64_or_warn(&info.lot_size_filter.min_order_qty, "min_order_qty"),
+            max_qty: parse_optional_f64(Some(&info.lot_size_filter.max_order_qty), "max_order_qty").unwrap_or(f64::MAX),
+            step_size: parse_f64_or_warn(&info.lot_size_filter.base_precision, "base_precision"),
+            tick_size: parse_f64_or_warn(&info.price_filter.tick_size, "tick_size"),
             min_notional: 0.0,
             max_leverage: None,
             is_spot: true,
@@ -673,10 +699,10 @@ impl SpotRest for BybitSpotAdapter {
                     base_asset: info.base_coin,
                     quote_asset: info.quote_coin,
                     status,
-                    min_qty: info.lot_size_filter.min_order_qty.parse().unwrap_or(0.0),
-                    max_qty: info.lot_size_filter.max_order_qty.parse().unwrap_or(f64::MAX),
-                    step_size: info.lot_size_filter.base_precision.parse().unwrap_or(0.0),
-                    tick_size: info.price_filter.tick_size.parse().unwrap_or(0.0),
+                    min_qty: parse_f64_or_warn(&info.lot_size_filter.min_order_qty, "min_order_qty"),
+                    max_qty: parse_optional_f64(Some(&info.lot_size_filter.max_order_qty), "max_order_qty").unwrap_or(f64::MAX),
+                    step_size: parse_f64_or_warn(&info.lot_size_filter.base_precision, "base_precision"),
+                    tick_size: parse_f64_or_warn(&info.price_filter.tick_size, "tick_size"),
                     min_notional: 0.0,
                     max_leverage: None,
                     is_spot: true,
@@ -703,20 +729,20 @@ impl SpotRest for BybitSpotAdapter {
         let ticker = result.list.first().context("Ticker not found")?;
         let now = Self::now_millis();
 
-        let last_price: f64 = ticker.last_price.parse().unwrap_or(0.0);
-        let prev_price: f64 = ticker.prev_price_24h.parse().unwrap_or(last_price);
-        let change_pct: f64 = ticker.price_24h_pcnt.parse().unwrap_or(0.0) * 100.0;
+        let last_price = parse_f64_or_warn(&ticker.last_price, "last_price");
+        let prev_price = parse_optional_f64(Some(&ticker.prev_price_24h), "prev_price_24h").unwrap_or(last_price);
+        let change_pct = parse_f64_or_warn(&ticker.price_24h_pcnt, "price_24h_pcnt") * 100.0;
 
         Ok(TickerInfo {
             symbol: ticker.symbol.clone(),
             last_price,
-            bid_price: ticker.bid1_price.parse().unwrap_or(0.0),
-            ask_price: ticker.ask1_price.parse().unwrap_or(0.0),
-            volume_24h: ticker.volume_24h.parse().unwrap_or(0.0),
+            bid_price: parse_f64_or_warn(&ticker.bid1_price, "bid1_price"),
+            ask_price: parse_f64_or_warn(&ticker.ask1_price, "ask1_price"),
+            volume_24h: parse_f64_or_warn(&ticker.volume_24h, "volume_24h"),
             price_change_24h: last_price - prev_price,
             price_change_pct_24h: change_pct,
-            high_24h: ticker.high_price_24h.parse().unwrap_or(0.0),
-            low_24h: ticker.low_price_24h.parse().unwrap_or(0.0),
+            high_24h: parse_f64_or_warn(&ticker.high_price_24h, "high_price_24h"),
+            low_24h: parse_f64_or_warn(&ticker.low_price_24h, "low_price_24h"),
             open_price_24h: prev_price,
             ts_ms: now,
         })
@@ -741,20 +767,20 @@ impl SpotRest for BybitSpotAdapter {
             .list
             .into_iter()
             .map(|ticker| {
-                let last_price: f64 = ticker.last_price.parse().unwrap_or(0.0);
-                let prev_price: f64 = ticker.prev_price_24h.parse().unwrap_or(last_price);
-                let change_pct: f64 = ticker.price_24h_pcnt.parse().unwrap_or(0.0) * 100.0;
+                let last_price = parse_f64_or_warn(&ticker.last_price, "last_price");
+                let prev_price = parse_optional_f64(Some(&ticker.prev_price_24h), "prev_price_24h").unwrap_or(last_price);
+                let change_pct = parse_f64_or_warn(&ticker.price_24h_pcnt, "price_24h_pcnt") * 100.0;
 
                 TickerInfo {
                     symbol: ticker.symbol,
                     last_price,
-                    bid_price: ticker.bid1_price.parse().unwrap_or(0.0),
-                    ask_price: ticker.ask1_price.parse().unwrap_or(0.0),
-                    volume_24h: ticker.volume_24h.parse().unwrap_or(0.0),
+                    bid_price: parse_f64_or_warn(&ticker.bid1_price, "bid1_price"),
+                    ask_price: parse_f64_or_warn(&ticker.ask1_price, "ask1_price"),
+                    volume_24h: parse_f64_or_warn(&ticker.volume_24h, "volume_24h"),
                     price_change_24h: last_price - prev_price,
                     price_change_pct_24h: change_pct,
-                    high_24h: ticker.high_price_24h.parse().unwrap_or(0.0),
-                    low_24h: ticker.low_price_24h.parse().unwrap_or(0.0),
+                    high_24h: parse_f64_or_warn(&ticker.high_price_24h, "high_price_24h"),
+                    low_24h: parse_f64_or_warn(&ticker.low_price_24h, "low_price_24h"),
                     open_price_24h: prev_price,
                     ts_ms: now,
                 }
@@ -820,17 +846,17 @@ impl SpotRest for BybitSpotAdapter {
             .iter()
             .filter_map(|k| {
                 if k.len() >= 7 {
-                    let open_ms: u64 = k[0].parse().unwrap_or(0);
+                    let open_ms = parse_f64_or_warn(&k[0], "kline_open_ms") as u64;
                     Some(Kline {
                         symbol: symbol.to_string(),
                         open_ms,
                         close_ms: open_ms + interval_to_ms(interval),
-                        open: k[1].parse().unwrap_or(0.0),
-                        high: k[2].parse().unwrap_or(0.0),
-                        low: k[3].parse().unwrap_or(0.0),
-                        close: k[4].parse().unwrap_or(0.0),
-                        volume: k[5].parse().unwrap_or(0.0),
-                        quote_volume: k[6].parse().unwrap_or(0.0),
+                        open: parse_f64_or_warn(&k[1], "kline_open"),
+                        high: parse_f64_or_warn(&k[2], "kline_high"),
+                        low: parse_f64_or_warn(&k[3], "kline_low"),
+                        close: parse_f64_or_warn(&k[4], "kline_close"),
+                        volume: parse_f64_or_warn(&k[5], "kline_volume"),
+                        quote_volume: parse_f64_or_warn(&k[6], "kline_quote_volume"),
                         trades: 0,
                     })
                 } else {
@@ -1450,10 +1476,7 @@ struct BybitWsTrade {
 }
 
 fn now_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64
+    safe_now_millis()
 }
 
 /// Parse Bybit user event from WebSocket message
@@ -1462,8 +1485,8 @@ fn parse_bybit_user_event(text: &str) -> Result<UserEvent> {
     if let Ok(msg) = serde_json::from_str::<BybitWsOrderMessage>(text) {
         if msg.topic == "order" {
             if let Some(order) = msg.data.first() {
-                let qty: f64 = order.qty.parse().unwrap_or(0.0);
-                let filled: f64 = order.cum_exec_qty.parse().unwrap_or(0.0);
+                let qty = parse_f64_or_warn(&order.qty, "ws_order_qty");
+                let filled = parse_f64_or_warn(&order.cum_exec_qty, "ws_cum_exec_qty");
                 let now = now_millis();
 
                 let order_struct = Order {
@@ -1473,14 +1496,14 @@ fn parse_bybit_user_event(text: &str) -> Result<UserEvent> {
                     ord_type: converters::from_bybit_order_type(&order.order_type),
                     side: converters::from_bybit_side(&order.side),
                     qty,
-                    price: order.price.parse().ok(),
+                    price: parse_optional_f64(Some(&order.price), "ws_order_price"),
                     stop_price: None,
                     tif: None,
                     status: converters::from_bybit_order_status(&order.order_status),
                     filled_qty: filled,
                     remaining_qty: qty - filled,
-                    created_ms: order.created_time.parse().unwrap_or(now),
-                    updated_ms: order.updated_time.parse().unwrap_or(now),
+                    created_ms: parse_f64_or_warn(&order.created_time, "ws_created_time") as u64,
+                    updated_ms: parse_f64_or_warn(&order.updated_time, "ws_updated_time") as u64,
                     recv_ms: now,
                     raw_status: Some(order.order_status.clone()),
                 };
@@ -1499,13 +1522,13 @@ fn parse_bybit_user_event(text: &str) -> Result<UserEvent> {
                     venue_order_id: exec.order_id.clone(),
                     client_order_id: exec.order_link_id.clone(),
                     symbol: exec.symbol.clone(),
-                    qty: exec.exec_qty.parse().unwrap_or(0.0),
-                    price: exec.exec_price.parse().unwrap_or(0.0),
+                    qty: parse_f64_or_warn(&exec.exec_qty, "ws_exec_qty"),
+                    price: parse_f64_or_warn(&exec.exec_price, "ws_exec_price"),
                     fee: 0.0,
                     fee_ccy: String::new(),
                     is_maker: false,
                     exec_id: exec.exec_id.clone(),
-                    ex_ts_ms: exec.exec_time.parse().unwrap_or(now),
+                    ex_ts_ms: parse_f64_or_warn(&exec.exec_time, "ws_exec_time") as u64,
                     recv_ms: now,
                 };
 
@@ -1529,12 +1552,12 @@ fn parse_bybit_book_update(text: &str, seq_map: &mut HashMap<String, u64>) -> Re
 
     let bids: Vec<(Price, Quantity)> = msg.data.b
         .iter()
-        .map(|[price, size]| (price.parse().unwrap_or(0.0), size.parse().unwrap_or(0.0)))
+        .map(|[price, size]| (parse_f64_or_warn(price, "ws_book_bid_price"), parse_f64_or_warn(size, "ws_book_bid_size")))
         .collect();
 
     let asks: Vec<(Price, Quantity)> = msg.data.a
         .iter()
-        .map(|[price, size]| (price.parse().unwrap_or(0.0), size.parse().unwrap_or(0.0)))
+        .map(|[price, size]| (parse_f64_or_warn(price, "ws_book_ask_price"), parse_f64_or_warn(size, "ws_book_ask_size")))
         .collect();
 
     Ok(BookUpdate::DepthDelta {
@@ -1559,8 +1582,8 @@ fn parse_bybit_trade_events(text: &str) -> Result<Vec<TradeEvent>> {
         .into_iter()
         .map(|trade| TradeEvent {
             symbol: trade.s,
-            px: trade.p.parse().unwrap_or(0.0),
-            qty: trade.v.parse().unwrap_or(0.0),
+            px: parse_f64_or_warn(&trade.p, "ws_trade_price"),
+            qty: parse_f64_or_warn(&trade.v, "ws_trade_qty"),
             taker_is_buy: trade.side == "Buy",
             ex_ts_ms: trade.timestamp,
             recv_ms: now,

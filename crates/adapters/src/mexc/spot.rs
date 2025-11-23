@@ -284,13 +284,14 @@ impl MexcSpotAdapter {
     ///
     /// "mm" prefix stands for "market maker" and helps identify orders from this system.
     fn generate_client_order_id() -> String {
-        format!(
-            "mm_{}",
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_millis()
-        )
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or_else(|e| {
+                tracing::error!("System time error: {}", e);
+                0
+            });
+        format!("mm_{}", timestamp)
     }
 
     /// Creates a new listen key for user data stream
@@ -485,8 +486,11 @@ impl SpotRest for MexcSpotAdapter {
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or_else(|e| {
+                tracing::error!("System time error: {}", e);
+                0
+            });
 
         Ok(Order {
             venue_order_id: response.order_id,
@@ -623,8 +627,11 @@ impl SpotRest for MexcSpotAdapter {
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or_else(|e| {
+                tracing::error!("System time error: {}", e);
+                0
+            });
 
         let qty: Quantity = response.orig_qty.parse().unwrap_or(0.0);
         let filled: Quantity = response.executed_qty.parse().unwrap_or(0.0);
@@ -696,8 +703,11 @@ impl SpotRest for MexcSpotAdapter {
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or_else(|e| {
+                tracing::error!("System time error: {}", e);
+                0
+            });
 
         Ok(response
             .into_iter()
@@ -854,8 +864,11 @@ impl SpotRest for MexcSpotAdapter {
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or_else(|e| {
+                tracing::error!("System time error: {}", e);
+                0
+            });
 
         let mut success = Vec::new();
         let mut failed = Vec::new();
@@ -1008,8 +1021,11 @@ impl SpotRest for MexcSpotAdapter {
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or_else(|e| {
+                tracing::error!("System time error: {}", e);
+                0
+            });
 
         Ok(AccountInfo {
             balances: response
@@ -1285,8 +1301,11 @@ impl SpotRest for MexcSpotAdapter {
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or_else(|e| {
+                tracing::error!("System time error: {}", e);
+                0
+            });
 
         Ok(TickerInfo {
             symbol: response.symbol,
@@ -1343,8 +1362,11 @@ impl SpotRest for MexcSpotAdapter {
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or_else(|e| {
+                tracing::error!("System time error: {}", e);
+                0
+            });
 
         let mut tickers: Vec<TickerInfo> = response
             .into_iter()
@@ -2038,8 +2060,11 @@ fn parse_user_event(text: &str) -> Result<UserEvent> {
     let msg: UserEventMessage = serde_json::from_str(text)?;
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64;
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or_else(|e| {
+            tracing::error!("System time error: {}", e);
+            0
+        });
 
     match msg.event_type.as_str() {
         "executionReport" => {
@@ -2120,8 +2145,11 @@ fn parse_book_update(text: &str, seq: &mut u64) -> Result<BookUpdate> {
     let msg: DepthMessage = serde_json::from_str(text)?;
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64;
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or_else(|e| {
+            tracing::error!("System time error: {}", e);
+            0
+        });
 
     if let Some(data) = msg.data {
         let symbol = msg.symbol.unwrap_or_default().to_uppercase();
@@ -2206,8 +2234,11 @@ fn parse_trade_event(text: &str) -> Result<TradeEvent> {
     let msg: TradeMessage = serde_json::from_str(text)?;
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64;
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or_else(|e| {
+            tracing::error!("System time error: {}", e);
+            0
+        });
 
     if let Some(data) = msg.data {
         if let Some(deal) = data.deals.first() {

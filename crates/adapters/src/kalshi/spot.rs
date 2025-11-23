@@ -100,8 +100,11 @@ impl KalshiSpotAdapter {
     fn now_millis() -> u64 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or_else(|e| {
+                tracing::error!("System time error: {}", e);
+                0
+            })
     }
 
     fn next_ws_message_id(&self) -> u64 {
@@ -1113,8 +1116,11 @@ impl SpotWs for KalshiSpotAdapter {
 fn now_millis() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or_else(|e| {
+            tracing::error!("System time error: {}", e);
+            0
+        })
 }
 
 #[derive(Debug, Deserialize)]

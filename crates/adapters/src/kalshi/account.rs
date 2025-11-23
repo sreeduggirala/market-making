@@ -64,11 +64,15 @@ impl KalshiAuth {
     }
 
     /// Generates current timestamp in milliseconds
+    /// Returns 0 if system time is unavailable (extremely rare)
     pub fn timestamp() -> u64 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards")
-            .as_millis() as u64
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or_else(|e| {
+                tracing::error!("System time error: {}", e);
+                0
+            })
     }
 
     /// Generates RSA-PSS signature for API requests
@@ -108,12 +112,16 @@ pub struct KalshiRestClient {
 impl KalshiRestClient {
     /// Creates a new Kalshi REST client (production)
     pub fn new(auth: Option<KalshiAuth>) -> Self {
+        let client = Client::builder()
+            .pool_max_idle_per_host(10)
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|e| {
+                tracing::error!("Failed to build HTTP client, using default: {}", e);
+                Client::new()
+            });
         Self {
-            client: Client::builder()
-                .pool_max_idle_per_host(10)
-                .timeout(std::time::Duration::from_secs(30))
-                .build()
-                .expect("Failed to build HTTP client"),
+            client,
             auth,
             base_url: KALSHI_REST_URL.to_string(),
         }
@@ -121,12 +129,16 @@ impl KalshiRestClient {
 
     /// Creates a new Kalshi REST client for demo environment
     pub fn new_demo(auth: Option<KalshiAuth>) -> Self {
+        let client = Client::builder()
+            .pool_max_idle_per_host(10)
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|e| {
+                tracing::error!("Failed to build HTTP client, using default: {}", e);
+                Client::new()
+            });
         Self {
-            client: Client::builder()
-                .pool_max_idle_per_host(10)
-                .timeout(std::time::Duration::from_secs(30))
-                .build()
-                .expect("Failed to build HTTP client"),
+            client,
             auth,
             base_url: KALSHI_REST_URL_DEMO.to_string(),
         }

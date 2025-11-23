@@ -52,11 +52,15 @@ impl BybitAuth {
     }
 
     /// Generates current timestamp in milliseconds
+    /// Returns 0 if system time is unavailable (extremely rare)
     pub fn timestamp() -> u64 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards")
-            .as_millis() as u64
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or_else(|e| {
+                tracing::error!("System time error: {}", e);
+                0
+            })
     }
 
     /// Generates HMAC-SHA256 signature for REST API requests
@@ -71,8 +75,14 @@ impl BybitAuth {
             timestamp, self.api_key, recv_window, param_string
         );
 
-        let mut mac = Hmac::<Sha256>::new_from_slice(self.api_secret.as_bytes())
-            .expect("HMAC can take key of any size");
+        // HMAC-SHA256 accepts keys of any size, this should never fail
+        let mut mac = match Hmac::<Sha256>::new_from_slice(self.api_secret.as_bytes()) {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::error!("HMAC initialization failed: {}", e);
+                return String::new();
+            }
+        };
         mac.update(sign_str.as_bytes());
 
         hex::encode(mac.finalize().into_bytes())
@@ -87,8 +97,14 @@ impl BybitAuth {
 
         let sign_str = format!("GET/realtime{}", expires);
 
-        let mut mac = Hmac::<Sha256>::new_from_slice(self.api_secret.as_bytes())
-            .expect("HMAC can take key of any size");
+        // HMAC-SHA256 accepts keys of any size, this should never fail
+        let mut mac = match Hmac::<Sha256>::new_from_slice(self.api_secret.as_bytes()) {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::error!("HMAC initialization failed: {}", e);
+                return String::new();
+            }
+        };
         mac.update(sign_str.as_bytes());
 
         hex::encode(mac.finalize().into_bytes())
@@ -111,12 +127,16 @@ pub struct BybitRestClient {
 impl BybitRestClient {
     /// Creates a new Bybit REST client
     pub fn new(auth: Option<BybitAuth>) -> Self {
+        let client = Client::builder()
+            .pool_max_idle_per_host(10)
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|e| {
+                tracing::error!("Failed to build HTTP client, using default: {}", e);
+                Client::new()
+            });
         Self {
-            client: Client::builder()
-                .pool_max_idle_per_host(10)
-                .timeout(std::time::Duration::from_secs(30))
-                .build()
-                .expect("Failed to build HTTP client"),
+            client,
             auth,
             base_url: BYBIT_REST_URL.to_string(),
             recv_window: 5000,

@@ -335,12 +335,13 @@ impl RiskEvent {
 }
 
 /// Get current timestamp in milliseconds
+/// Returns 0 if system time is unavailable (extremely rare)
 fn now_ms() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or_else(|_| 0)
 }
 
 #[cfg(test)]
