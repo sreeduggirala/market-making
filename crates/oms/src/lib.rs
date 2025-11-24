@@ -7,12 +7,14 @@ pub mod order_book;
 pub mod event_processor;
 pub mod order_router;
 pub mod manager;
+pub mod paper_trading;
 
 #[cfg(feature = "persistence")]
 pub mod persistence_handle;
 
 pub use manager::OrderManager;
 pub use order_book::OrderBook;
+pub use paper_trading::{PaperTradingAdapter, PaperTradingConfig, SimulatedFill};
 
 #[cfg(feature = "persistence")]
 pub use persistence_handle::PersistenceHandle;

@@ -26,14 +26,68 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Bybit REST API base URL (mainnet)
 pub const BYBIT_REST_URL: &str = "https://api.bybit.com";
 
-/// Bybit Public WebSocket - Spot
+/// Bybit REST API base URL (testnet)
+pub const BYBIT_TESTNET_REST_URL: &str = "https://api-testnet.bybit.com";
+
+/// Bybit Public WebSocket - Spot (mainnet)
 pub const BYBIT_WS_SPOT_URL: &str = "wss://stream.bybit.com/v5/public/spot";
 
-/// Bybit Public WebSocket - Linear (USDT perpetuals)
+/// Bybit Public WebSocket - Spot (testnet)
+pub const BYBIT_TESTNET_WS_SPOT_URL: &str = "wss://stream-testnet.bybit.com/v5/public/spot";
+
+/// Bybit Public WebSocket - Linear (USDT perpetuals, mainnet)
 pub const BYBIT_WS_LINEAR_URL: &str = "wss://stream.bybit.com/v5/public/linear";
 
-/// Bybit Private WebSocket (all products)
+/// Bybit Public WebSocket - Linear (USDT perpetuals, testnet)
+pub const BYBIT_TESTNET_WS_LINEAR_URL: &str = "wss://stream-testnet.bybit.com/v5/public/linear";
+
+/// Bybit Private WebSocket (all products, mainnet)
 pub const BYBIT_WS_PRIVATE_URL: &str = "wss://stream.bybit.com/v5/private";
+
+/// Bybit Private WebSocket (all products, testnet)
+pub const BYBIT_TESTNET_WS_PRIVATE_URL: &str = "wss://stream-testnet.bybit.com/v5/private";
+
+/// Network environment for Bybit
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BybitNetwork {
+    #[default]
+    Mainnet,
+    Testnet,
+}
+
+impl BybitNetwork {
+    /// Returns the REST API base URL for this network
+    pub fn rest_url(&self) -> &'static str {
+        match self {
+            BybitNetwork::Mainnet => BYBIT_REST_URL,
+            BybitNetwork::Testnet => BYBIT_TESTNET_REST_URL,
+        }
+    }
+
+    /// Returns the spot WebSocket URL for this network
+    pub fn ws_spot_url(&self) -> &'static str {
+        match self {
+            BybitNetwork::Mainnet => BYBIT_WS_SPOT_URL,
+            BybitNetwork::Testnet => BYBIT_TESTNET_WS_SPOT_URL,
+        }
+    }
+
+    /// Returns the linear WebSocket URL for this network
+    pub fn ws_linear_url(&self) -> &'static str {
+        match self {
+            BybitNetwork::Mainnet => BYBIT_WS_LINEAR_URL,
+            BybitNetwork::Testnet => BYBIT_TESTNET_WS_LINEAR_URL,
+        }
+    }
+
+    /// Returns the private WebSocket URL for this network
+    pub fn ws_private_url(&self) -> &'static str {
+        match self {
+            BybitNetwork::Mainnet => BYBIT_WS_PRIVATE_URL,
+            BybitNetwork::Testnet => BYBIT_TESTNET_WS_PRIVATE_URL,
+        }
+    }
+}
 
 // =============================================================================
 // Authentication
@@ -125,8 +179,18 @@ pub struct BybitRestClient {
 }
 
 impl BybitRestClient {
-    /// Creates a new Bybit REST client
+    /// Creates a new Bybit REST client (mainnet)
     pub fn new(auth: Option<BybitAuth>) -> Self {
+        Self::with_network(auth, BybitNetwork::Mainnet)
+    }
+
+    /// Creates a new Bybit REST client for testnet
+    pub fn testnet(auth: Option<BybitAuth>) -> Self {
+        Self::with_network(auth, BybitNetwork::Testnet)
+    }
+
+    /// Creates a new Bybit REST client with specified network
+    pub fn with_network(auth: Option<BybitAuth>, network: BybitNetwork) -> Self {
         let client = Client::builder()
             .pool_max_idle_per_host(10)
             .timeout(std::time::Duration::from_secs(30))
@@ -138,7 +202,7 @@ impl BybitRestClient {
         Self {
             client,
             auth,
-            base_url: BYBIT_REST_URL.to_string(),
+            base_url: network.rest_url().to_string(),
             recv_window: 5000,
         }
     }
@@ -587,5 +651,67 @@ mod tests {
         assert!(BYBIT_WS_SPOT_URL.contains("bybit"));
         assert!(BYBIT_WS_LINEAR_URL.contains("bybit"));
         assert!(BYBIT_WS_PRIVATE_URL.contains("bybit"));
+    }
+
+    // -------------------------------------------------------------------------
+    // Testnet Support Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_testnet_urls_are_valid() {
+        assert!(BYBIT_TESTNET_REST_URL.starts_with("https://"));
+        assert!(BYBIT_TESTNET_WS_SPOT_URL.starts_with("wss://"));
+        assert!(BYBIT_TESTNET_WS_LINEAR_URL.starts_with("wss://"));
+        assert!(BYBIT_TESTNET_WS_PRIVATE_URL.starts_with("wss://"));
+    }
+
+    #[test]
+    fn test_testnet_urls_contain_testnet() {
+        assert!(BYBIT_TESTNET_REST_URL.contains("testnet"));
+        assert!(BYBIT_TESTNET_WS_SPOT_URL.contains("testnet"));
+        assert!(BYBIT_TESTNET_WS_LINEAR_URL.contains("testnet"));
+        assert!(BYBIT_TESTNET_WS_PRIVATE_URL.contains("testnet"));
+    }
+
+    #[test]
+    fn test_bybit_network_default_is_mainnet() {
+        let network = BybitNetwork::default();
+        assert_eq!(network, BybitNetwork::Mainnet);
+    }
+
+    #[test]
+    fn test_bybit_network_mainnet_urls() {
+        let network = BybitNetwork::Mainnet;
+        assert_eq!(network.rest_url(), BYBIT_REST_URL);
+        assert_eq!(network.ws_spot_url(), BYBIT_WS_SPOT_URL);
+        assert_eq!(network.ws_linear_url(), BYBIT_WS_LINEAR_URL);
+        assert_eq!(network.ws_private_url(), BYBIT_WS_PRIVATE_URL);
+    }
+
+    #[test]
+    fn test_bybit_network_testnet_urls() {
+        let network = BybitNetwork::Testnet;
+        assert_eq!(network.rest_url(), BYBIT_TESTNET_REST_URL);
+        assert_eq!(network.ws_spot_url(), BYBIT_TESTNET_WS_SPOT_URL);
+        assert_eq!(network.ws_linear_url(), BYBIT_TESTNET_WS_LINEAR_URL);
+        assert_eq!(network.ws_private_url(), BYBIT_TESTNET_WS_PRIVATE_URL);
+    }
+
+    #[test]
+    fn test_rest_client_testnet() {
+        let client = BybitRestClient::testnet(None);
+        assert_eq!(client.base_url, BYBIT_TESTNET_REST_URL);
+    }
+
+    #[test]
+    fn test_rest_client_with_network_mainnet() {
+        let client = BybitRestClient::with_network(None, BybitNetwork::Mainnet);
+        assert_eq!(client.base_url, BYBIT_REST_URL);
+    }
+
+    #[test]
+    fn test_rest_client_with_network_testnet() {
+        let client = BybitRestClient::with_network(None, BybitNetwork::Testnet);
+        assert_eq!(client.base_url, BYBIT_TESTNET_REST_URL);
     }
 }

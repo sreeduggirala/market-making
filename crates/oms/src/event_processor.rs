@@ -430,7 +430,14 @@ impl EventProcessor {
         }
 
         // Broadcast fill to subscribers (strategies, inventory manager, etc.)
-        let _ = fill_tx.send(fill);
+        if let Err(e) = fill_tx.send(fill) {
+            warn!(
+                %exchange,
+                receivers = fill_tx.receiver_count(),
+                "Failed to broadcast fill event (no receivers or lagging): {}",
+                e
+            );
+        }
 
         Ok(())
     }
@@ -479,7 +486,14 @@ impl EventProcessor {
         }
 
         // Broadcast fill to subscribers (strategies, inventory manager, etc.)
-        let _ = fill_tx.send(fill);
+        if let Err(e) = fill_tx.send(fill) {
+            warn!(
+                %exchange,
+                receivers = fill_tx.receiver_count(),
+                "Failed to broadcast fill event (no receivers or lagging): {}",
+                e
+            );
+        }
 
         Ok(())
     }
@@ -518,7 +532,14 @@ impl EventProcessor {
         }
 
         // Broadcast to subscribers (inventory manager will pick this up)
-        let _ = position_tx.send(position);
+        if let Err(e) = position_tx.send(position) {
+            warn!(
+                %exchange,
+                receivers = position_tx.receiver_count(),
+                "Failed to broadcast position event (no receivers or lagging): {}",
+                e
+            );
+        }
 
         Ok(())
     }
@@ -540,7 +561,14 @@ impl EventProcessor {
         );
 
         // Broadcast to subscribers (inventory manager will pick this up)
-        let _ = position_tx.send(position);
+        if let Err(e) = position_tx.send(position) {
+            warn!(
+                %exchange,
+                receivers = position_tx.receiver_count(),
+                "Failed to broadcast position event (no receivers or lagging): {}",
+                e
+            );
+        }
 
         Ok(())
     }

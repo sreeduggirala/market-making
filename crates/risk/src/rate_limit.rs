@@ -10,6 +10,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{debug, warn};
 
+/// Maximum entries to keep in rate tracking queues (defensive cap)
+const MAX_QUEUE_SIZE: usize = 10_000;
+
 /// Strategy-level rate limiter
 ///
 /// Tracks order and cancel rates to ensure compliance with limits.
@@ -61,7 +64,7 @@ impl StrategyRateLimiter {
                 "Order rate limit exceeded"
             );
             return Err(RiskViolation::OrderRateLimitExceeded {
-                orders_per_second: current_rate / self.limits.window_secs as u32,
+                orders_per_second: current_rate / self.limits.window_secs.max(1) as u32,
                 max_per_second: self.limits.max_orders_per_second,
             });
         }
@@ -87,7 +90,7 @@ impl StrategyRateLimiter {
                 "Cancel rate limit exceeded"
             );
             return Err(RiskViolation::CancelRateLimitExceeded {
-                cancels_per_second: current_rate / self.limits.window_secs as u32,
+                cancels_per_second: current_rate / self.limits.window_secs.max(1) as u32,
                 max_per_second: self.limits.max_cancels_per_second,
             });
         }
@@ -101,6 +104,16 @@ impl StrategyRateLimiter {
 
         let mut order_times = self.order_times.lock();
         order_times.push_back(now);
+
+        // Defensive cap: prevent unbounded growth in edge cases
+        if order_times.len() > MAX_QUEUE_SIZE {
+            let excess = order_times.len() - MAX_QUEUE_SIZE;
+            warn!(excess, "Order rate queue exceeded max size, dropping oldest entries");
+            for _ in 0..excess {
+                order_times.pop_front();
+            }
+        }
+
         self.total_orders.fetch_add(1, Ordering::Relaxed);
 
         debug!(total = self.total_orders.load(Ordering::Relaxed), "Order recorded");
@@ -112,6 +125,15 @@ impl StrategyRateLimiter {
 
         let mut cancel_times = self.cancel_times.lock();
         cancel_times.push_back(now);
+
+        // Defensive cap: prevent unbounded growth in edge cases
+        if cancel_times.len() > MAX_QUEUE_SIZE {
+            let excess = cancel_times.len() - MAX_QUEUE_SIZE;
+            warn!(excess, "Cancel rate queue exceeded max size, dropping oldest entries");
+            for _ in 0..excess {
+                cancel_times.pop_front();
+            }
+        }
 
         debug!("Cancel recorded");
     }

@@ -269,10 +269,20 @@ impl AvellanedaStoikov {
     /// Second term: adverse selection component
     #[cfg_attr(test, allow(dead_code))]
     pub(crate) fn calculate_optimal_spread(&self, volatility: f64) -> f64 {
+        self.calculate_optimal_spread_with_price(volatility, 50000.0)
+    }
+
+    /// Calculates the optimal spread using actual mid price for basis point conversion
+    pub(crate) fn calculate_optimal_spread_with_price(&self, volatility: f64, mid_price: f64) -> f64 {
         let gamma = self.config.risk_aversion;
         let sigma_squared = volatility.powi(2);
         let T = self.config.time_horizon_secs;
         let kappa = self.config.order_arrival_rate;
+
+        // Safety: ensure gamma and kappa are positive to avoid division by zero / NaN
+        let gamma = gamma.max(0.0001);
+        let kappa = kappa.max(0.0001);
+        let mid_price = mid_price.max(0.01); // Avoid division by zero
 
         // Inventory risk term
         let inventory_term = gamma * sigma_squared * T;
@@ -282,8 +292,7 @@ impl AvellanedaStoikov {
 
         let spread = inventory_term + adverse_selection_term;
 
-        // Apply min/max constraints (use a default mid price for spread calculation)
-        let mid_price = 50000.0; // Default reference price for spread calculation
+        // Apply min/max constraints using actual mid price
         let spread_bps = (spread / mid_price) * 10000.0;
 
         let clamped_bps = spread_bps
@@ -327,8 +336,8 @@ impl AvellanedaStoikov {
             state.volatility,
         );
 
-        // Calculate optimal spread
-        let spread = self.calculate_optimal_spread(state.volatility);
+        // Calculate optimal spread using actual mid price for proper basis point calculation
+        let spread = self.calculate_optimal_spread_with_price(state.volatility, market_data.mid_price);
         let half_spread = spread / 2.0;
 
         // Calculate bid and ask

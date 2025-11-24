@@ -3,6 +3,7 @@
 //! Prevents cascading failures by stopping requests to failing services
 //! and allowing them time to recover.
 
+use anyhow::anyhow;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
@@ -121,7 +122,7 @@ impl CircuitBreaker {
     where
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Result<T, E>>,
-        E: std::fmt::Display,
+        E: std::fmt::Display + From<anyhow::Error>,
     {
         // Check if we can make the request
         if !self.allow_request().await {
@@ -288,10 +289,8 @@ impl CircuitBreaker {
     }
 
     /// Creates an error indicating circuit is open
-    fn create_open_circuit_error<E: std::fmt::Display>(&self) -> E {
-        // This is a bit hacky but we need to return the error type E
-        // In practice, this should never be called because we check allow_request first
-        panic!("Circuit breaker '{}' is open", self.name)
+    fn create_open_circuit_error<E: From<anyhow::Error>>(&self) -> E {
+        E::from(anyhow!("Circuit breaker '{}' is open - requests blocked", self.name))
     }
 
     /// Manually resets the circuit breaker to closed state

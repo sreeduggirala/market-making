@@ -29,3 +29,5 @@ rust_decimal = { workspace = true, optional = true }
 # OMS-specific
 uuid = { version = "1.11", features = ["v4", "fast-rng"] }
 dashmap = "6.1"  # Concurrent HashMap
+parking_lot = "0.12"  # Fast RwLock for paper trading
+rand = "0.8"  # For test IDs
