@@ -1,7 +1,11 @@
 pub mod binance_us;
+pub mod bitget;
 pub mod bybit;
+pub mod gateio;
 pub mod kalshi;
 pub mod kraken;
+pub mod kucoin;
 pub mod mexc;
+pub mod okx;
 pub mod traits;
 pub mod utils;

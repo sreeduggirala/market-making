@@ -121,7 +121,7 @@ pub enum OrderType {
     TakeProfitLimit,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Side {
     Buy,
     Sell,
@@ -295,7 +295,7 @@ pub enum UserEvent {
     },
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MarginMode {
     Cross,
     Isolated,

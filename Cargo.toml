@@ -54,31 +54,3 @@ futures-util = "0.3"
 
 # Environment variables
 dotenvy = "0.15"
-
-# Main binary for running strategies
-[package]
-name = "market-making"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-adapters = { path = "crates/adapters" }
-oms = { path = "crates/oms" }
-inventory = { path = "crates/inventory" }
-strategies = { path = "crates/strategies" }
-risk = { path = "crates/risk" }
-persistence = { path = "crates/persistence" }
-
-tokio = { workspace = true }
-anyhow = { workspace = true }
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
-dotenvy = { workspace = true }
-
-[[bin]]
-name = "test-core"
-path = "bin/test_core.rs"
-
-[[bin]]
-name = "run-avellaneda-stoikov"
-path = "bin/run_avellaneda_stoikov.rs"
