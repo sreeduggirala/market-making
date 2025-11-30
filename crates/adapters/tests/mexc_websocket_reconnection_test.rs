@@ -267,7 +267,7 @@ async fn test_mexc_comprehensive_reconnection_report() {
 
     let reconnect_start = Instant::now();
     let adapter2 = MexcSpotAdapter::new(api_key, api_secret);
-    let user_stream2 = adapter2.subscribe_user().await
+    let mut user_stream2 = adapter2.subscribe_user().await
         .expect("Failed to reconnect");
     let reconnect_time = reconnect_start.elapsed();
 

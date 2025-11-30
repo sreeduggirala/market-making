@@ -19,7 +19,7 @@
 //! to minimize cost while measuring actual latency.
 
 use adapters::mexc::MexcSpotAdapter;
-use adapters::traits::{SpotRest, OrderType, Side, CreateOrderRequest};
+use adapters::traits::{SpotRest, OrderType, Side, NewOrder};
 use risk::{LatencyTracker, LatencyConfig, now_ms};
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
@@ -55,34 +55,41 @@ async fn test_mexc_single_order_latency() {
     let adapter = MexcSpotAdapter::new(api_key, api_secret);
     println!("   ✓ Adapter ready");
 
-    println!("\n2️⃣  Getting current market price for BTCUSDT");
-    let ticker = adapter.get_ticker_info("BTCUSDT").await
+    println!("\n2️⃣  Getting current market price for ETHUSDC");
+    let ticker = adapter.get_ticker("ETHUSDC").await
         .expect("Failed to get ticker");
 
     let current_price = ticker.last_price;
     // Place order far from market to avoid fill (99% below current price)
     let test_price = current_price * 0.01;
+    // MEXC requires minimum 1 USDC worth of ETH
+    let min_notional = 1.0; // 1 USDC
+    let test_qty = (min_notional / test_price) * 1.1; // Add 10% buffer
 
     println!("   Current price: ${:.2}", current_price);
     println!("   Test order price: ${:.2} (will not fill)", test_price);
+    println!("   Test order quantity: {:.4} ETH (~${:.2})", test_qty, test_price * test_qty);
 
     println!("\n3️⃣  Submitting test limit buy order");
-    println!("   Symbol: BTCUSDT");
+    println!("   Symbol: ETHUSDC");
     println!("   Side: BUY");
-    println!("   Quantity: 0.0001 BTC (~${:.2})", test_price * 0.0001);
+    println!("   Quantity: {:.4} ETH (~${:.2})", test_qty, test_price * test_qty);
     println!("   Price: ${:.2}", test_price);
 
     let created_ms = now_ms();
     let order_start = Instant::now();
 
-    let order = adapter.create_order(CreateOrderRequest {
-        symbol: "BTCUSDT".to_string(),
+    let order = adapter.create_order(NewOrder {
+        symbol: "ETHUSDC".to_string(),
         side: Side::Buy,
         ord_type: OrderType::Limit,
-        qty: 0.0001, // Minimum order size
+        qty: test_qty,
         price: Some(test_price),
-        client_order_id: Some(format!("latency_test_{}", created_ms)),
-        ..Default::default()
+        stop_price: None,
+        tif: None,
+        post_only: false,
+        reduce_only: false,
+        client_order_id: format!("latency_test_{}", created_ms),
     }).await;
 
     let sent_ms = now_ms();
@@ -105,7 +112,7 @@ async fn test_mexc_single_order_latency() {
 
             // Cancel the order
             println!("\n5️⃣  Cancelling test order");
-            match adapter.cancel_order("BTCUSDT", &order.venue_order_id).await {
+            match adapter.cancel_order("ETHUSDC", &order.venue_order_id).await {
                 Ok(_) => println!("   ✓ Order cancelled successfully"),
                 Err(e) => println!("   ⚠️  Cancel failed (may already be cancelled): {}", e),
             }
@@ -127,6 +134,11 @@ async fn test_mexc_single_order_latency() {
         Err(e) => {
             println!("\n❌ Test failed: Order submission error");
             println!("   Error: {}", e);
+            println!("\n   Full error chain:");
+            for (i, cause) in e.chain().enumerate() {
+                println!("   [{}] {}", i, cause);
+            }
+            println!("\n   Debug: {:?}", e);
             println!("\n   Possible reasons:");
             println!("   - Insufficient balance");
             println!("   - API permissions not enabled for trading");
@@ -155,7 +167,7 @@ async fn test_mexc_p99_latency_measurement() {
 
     println!("\n1️⃣  Configuration:");
     println!("   Exchange: MEXC Spot");
-    println!("   Symbol: BTCUSDT");
+    println!("   Symbol: ETHUSDC");
     println!("   Sample size: {} orders", sample_count);
     println!("   P99 threshold: 200ms");
 
@@ -169,14 +181,17 @@ async fn test_mexc_p99_latency_measurement() {
     println!("   ✓ Adapter and tracker ready");
 
     println!("\n3️⃣  Getting market price");
-    let ticker = adapter.get_ticker_info("BTCUSDT").await
+    let ticker = adapter.get_ticker("ETHUSDC").await
         .expect("Failed to get ticker");
 
     let current_price = ticker.last_price;
     let test_price = current_price * 0.01; // 99% below market
+    let min_notional = 1.0; // 1 USDC minimum
+    let test_qty = (min_notional / test_price) * 1.1; // Add 10% buffer
 
     println!("   Current price: ${:.2}", current_price);
     println!("   Test price: ${:.2}", test_price);
+    println!("   Test quantity: {:.4} ETH", test_qty);
 
     println!("\n4️⃣  Submitting {} test orders", sample_count);
     println!("   (orders placed far from market to avoid fills)\n");
@@ -190,14 +205,17 @@ async fn test_mexc_p99_latency_measurement() {
 
         print!("   Order {}/{}: ", i, sample_count);
 
-        let result = adapter.create_order(CreateOrderRequest {
-            symbol: "BTCUSDT".to_string(),
+        let result = adapter.create_order(NewOrder {
+            symbol: "ETHUSDC".to_string(),
             side: Side::Buy,
             ord_type: OrderType::Limit,
-            qty: 0.0001,
+            qty: test_qty,
             price: Some(test_price),
-            client_order_id: Some(format!("p99_test_{}_{}", created_ms, i)),
-            ..Default::default()
+            stop_price: None,
+            tif: None,
+            post_only: false,
+            reduce_only: false,
+            client_order_id: format!("p99_test_{}_{}", created_ms, i),
         }).await;
 
         let sent_ms = now_ms();
@@ -258,7 +276,7 @@ async fn test_mexc_p99_latency_measurement() {
 
     println!("\n8️⃣  Cleaning up test orders");
     for (i, order_id) in order_ids.iter().enumerate() {
-        match adapter.cancel_order("BTCUSDT", order_id).await {
+        match adapter.cancel_order("ETHUSDC", order_id).await {
             Ok(_) => print!("."),
             Err(_) => print!("!"),
         }
@@ -299,7 +317,7 @@ async fn test_mexc_comprehensive_p99_report() {
     println!("{}", "-".repeat(60));
     println!("   Exchange: MEXC");
     println!("   Market: Spot");
-    println!("   Symbol: BTCUSDT");
+    println!("   Symbol: ETHUSDC");
     println!("   Order type: Limit (far from market)");
     println!("   Sample size: 30 orders");
     println!("   Target: P99 < 200ms");
@@ -314,15 +332,18 @@ async fn test_mexc_comprehensive_p99_report() {
     println!("\n2️⃣  Pre-Flight Checks");
     println!("{}", "-".repeat(60));
 
-    let ticker = adapter.get_ticker_info("BTCUSDT").await
+    let ticker = adapter.get_ticker("ETHUSDC").await
         .expect("Failed to get ticker");
     let current_price = ticker.last_price;
     let test_price = current_price * 0.01;
+    let min_notional = 1.0;
+    let test_qty = (min_notional / test_price) * 1.1;
 
     println!("   ✓ Connection to MEXC: OK");
     println!("   ✓ Market data access: OK");
-    println!("   ✓ Current BTC price: ${:.2}", current_price);
+    println!("   ✓ Current ETH price: ${:.2}", current_price);
     println!("   ✓ Test order price: ${:.2} (safe, won't fill)", test_price);
+    println!("   ✓ Test order quantity: {:.4} ETH", test_qty);
 
     println!("\n3️⃣  Latency Measurement (30 orders)");
     println!("{}", "-".repeat(60));
@@ -335,14 +356,17 @@ async fn test_mexc_comprehensive_p99_report() {
         let created_ms = now_ms();
         let order_start = Instant::now();
 
-        let result = adapter.create_order(CreateOrderRequest {
-            symbol: "BTCUSDT".to_string(),
+        let result = adapter.create_order(NewOrder {
+            symbol: "ETHUSDC".to_string(),
             side: Side::Buy,
             ord_type: OrderType::Limit,
-            qty: 0.0001,
+            qty: test_qty,
             price: Some(test_price),
-            client_order_id: Some(format!("comprehensive_test_{}_{}", created_ms, i)),
-            ..Default::default()
+            stop_price: None,
+            tif: None,
+            post_only: false,
+            reduce_only: false,
+            client_order_id: format!("comprehensive_test_{}_{}", created_ms, i),
         }).await;
 
         let sent_ms = now_ms();
@@ -425,7 +449,7 @@ async fn test_mexc_comprehensive_p99_report() {
     print!("   Cancelling test orders: ");
 
     for order_id in &order_ids {
-        let _ = adapter.cancel_order("BTCUSDT", order_id).await;
+        let _ = adapter.cancel_order("ETHUSDC", order_id).await;
     }
     println!("✓ Done");
 

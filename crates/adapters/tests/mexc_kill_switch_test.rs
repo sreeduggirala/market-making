@@ -17,7 +17,7 @@
 //! - Kill switch integrates with real trading flow
 
 use adapters::mexc::MexcSpotAdapter;
-use adapters::traits::{SpotRest, OrderType, Side, CreateOrderRequest};
+use adapters::traits::{SpotRest, OrderType, Side, NewOrder};
 use risk::{KillSwitch, KillSwitchTrigger};
 use std::time::Duration;
 use tokio::time::sleep;
@@ -41,6 +41,7 @@ async fn submit_order_with_kill_switch(
     symbol: &str,
     price: f64,
     order_num: u32,
+    test_qty: f64,
 ) -> Result<String, String> {
     // Pre-trade kill switch check
     if kill_switch.is_triggered() {
@@ -49,14 +50,17 @@ async fn submit_order_with_kill_switch(
     }
 
     // Submit order
-    let result = adapter.create_order(CreateOrderRequest {
+    let result = adapter.create_order(NewOrder {
         symbol: symbol.to_string(),
         side: Side::Buy,
         ord_type: OrderType::Limit,
-        qty: 0.0001,
+        qty: test_qty,
         price: Some(price),
-        client_order_id: Some(format!("kill_switch_test_{}", order_num)),
-        ..Default::default()
+        stop_price: None,
+        tif: None,
+        post_only: false,
+        reduce_only: false,
+        client_order_id: format!("kill_switch_test_{}", order_num),
     }).await;
 
     match result {
@@ -87,20 +91,23 @@ async fn test_mexc_kill_switch_order_blocking() {
     println!("   Kill switch status: INACTIVE");
 
     println!("\n2️⃣  Getting market price");
-    let ticker = adapter.get_ticker_info("BTCUSDT").await
+    let ticker = adapter.get_ticker("ETHUSDC").await
         .expect("Failed to get ticker");
     let test_price = ticker.last_price * 0.01;
+    let min_notional = 1.0;
+    let test_qty = (min_notional / test_price) * 1.1;
     println!("   Test price: ${:.2}", test_price);
+    println!("   Test quantity: {:.4} ETH", test_qty);
 
     println!("\n3️⃣  Submitting orders with kill switch INACTIVE");
-    let result1 = submit_order_with_kill_switch(&adapter, &kill_switch, "BTCUSDT", test_price, 1).await;
+    let result1 = submit_order_with_kill_switch(&adapter, &kill_switch, "ETHUSDC", test_price, 1, test_qty).await;
 
     match &result1 {
         Ok(order_id) => {
             println!("   ✅ Order 1: ACCEPTED (ID: {})", order_id);
 
             // Clean up
-            let _ = adapter.cancel_order("BTCUSDT", order_id).await;
+            let _ = adapter.cancel_order("ETHUSDC", order_id).await;
         }
         Err(e) => {
             println!("   ❌ Order 1: FAILED ({})", e);
@@ -116,22 +123,22 @@ async fn test_mexc_kill_switch_order_blocking() {
 
     println!("\n5️⃣  Attempting to submit orders with kill switch ACTIVE");
 
-    let result2 = submit_order_with_kill_switch(&adapter, &kill_switch, "BTCUSDT", test_price, 2).await;
+    let result2 = submit_order_with_kill_switch(&adapter, &kill_switch, "ETHUSDC", test_price, 2, test_qty).await;
     match &result2 {
         Ok(order_id) => {
             println!("   ❌ Order 2: ACCEPTED (should have been blocked!) ID: {}", order_id);
-            let _ = adapter.cancel_order("BTCUSDT", order_id).await;
+            let _ = adapter.cancel_order("ETHUSDC", order_id).await;
         }
         Err(e) => {
             println!("   ✅ Order 2: REJECTED ({})", e);
         }
     }
 
-    let result3 = submit_order_with_kill_switch(&adapter, &kill_switch, "BTCUSDT", test_price, 3).await;
+    let result3 = submit_order_with_kill_switch(&adapter, &kill_switch, "ETHUSDC", test_price, 3, test_qty).await;
     match &result3 {
         Ok(order_id) => {
             println!("   ❌ Order 3: ACCEPTED (should have been blocked!) ID: {}", order_id);
-            let _ = adapter.cancel_order("BTCUSDT", order_id).await;
+            let _ = adapter.cancel_order("ETHUSDC", order_id).await;
         }
         Err(e) => {
             println!("   ✅ Order 3: REJECTED ({})", e);
@@ -144,12 +151,12 @@ async fn test_mexc_kill_switch_order_blocking() {
     println!("   Status: INACTIVE");
 
     println!("\n7️⃣  Submitting orders after reset");
-    let result4 = submit_order_with_kill_switch(&adapter, &kill_switch, "BTCUSDT", test_price, 4).await;
+    let result4 = submit_order_with_kill_switch(&adapter, &kill_switch, "ETHUSDC", test_price, 4, test_qty).await;
 
     match &result4 {
         Ok(order_id) => {
             println!("   ✅ Order 4: ACCEPTED (ID: {})", order_id);
-            let _ = adapter.cancel_order("BTCUSDT", order_id).await;
+            let _ = adapter.cancel_order("ETHUSDC", order_id).await;
         }
         Err(e) => {
             println!("   ❌ Order 4: FAILED ({})", e);
@@ -188,14 +195,16 @@ async fn test_mexc_kill_switch_trigger_types() {
     let adapter = MexcSpotAdapter::new(api_key, api_secret);
     let kill_switch = KillSwitch::new();
 
-    let ticker = adapter.get_ticker_info("BTCUSDT").await
+    let ticker = adapter.get_ticker("ETHUSDC").await
         .expect("Failed to get ticker");
     let test_price = ticker.last_price * 0.01;
+    let min_notional = 1.0;
+    let test_qty = (min_notional / test_price) * 1.1;
 
     println!("\n1️⃣  Testing Manual Trigger");
     kill_switch.trigger_with_type("Manual operator intervention", KillSwitchTrigger::Manual);
 
-    let result = submit_order_with_kill_switch(&adapter, &kill_switch, "BTCUSDT", test_price, 1).await;
+    let result = submit_order_with_kill_switch(&adapter, &kill_switch, "ETHUSDC", test_price, 1, test_qty).await;
     assert!(result.is_err(), "Order should be blocked");
     println!("   ✓ Manual trigger: Order blocked");
     println!("   Trigger type: {:?}", kill_switch.get_trigger_type());
@@ -205,7 +214,7 @@ async fn test_mexc_kill_switch_trigger_types() {
     println!("\n2️⃣  Testing Max Loss Trigger");
     kill_switch.trigger_with_type("Daily loss: $15,000 > $10,000 limit", KillSwitchTrigger::MaxLoss);
 
-    let result = submit_order_with_kill_switch(&adapter, &kill_switch, "BTCUSDT", test_price, 2).await;
+    let result = submit_order_with_kill_switch(&adapter, &kill_switch, "ETHUSDC", test_price, 2, test_qty).await;
     assert!(result.is_err(), "Order should be blocked");
     println!("   ✓ Max loss trigger: Order blocked");
     println!("   Reason: {}", kill_switch.get_reason().unwrap());
@@ -215,7 +224,7 @@ async fn test_mexc_kill_switch_trigger_types() {
     println!("\n3️⃣  Testing Max Drawdown Trigger");
     kill_switch.trigger_with_type("Drawdown: 28% > 25% limit", KillSwitchTrigger::MaxDrawdown);
 
-    let result = submit_order_with_kill_switch(&adapter, &kill_switch, "BTCUSDT", test_price, 3).await;
+    let result = submit_order_with_kill_switch(&adapter, &kill_switch, "ETHUSDC", test_price, 3, test_qty).await;
     assert!(result.is_err(), "Order should be blocked");
     println!("   ✓ Max drawdown trigger: Order blocked");
 
@@ -224,7 +233,7 @@ async fn test_mexc_kill_switch_trigger_types() {
     println!("\n4️⃣  Testing Connectivity Trigger");
     kill_switch.trigger_with_type("WebSocket disconnected > 10s", KillSwitchTrigger::Connectivity);
 
-    let result = submit_order_with_kill_switch(&adapter, &kill_switch, "BTCUSDT", test_price, 4).await;
+    let result = submit_order_with_kill_switch(&adapter, &kill_switch, "ETHUSDC", test_price, 4, test_qty).await;
     assert!(result.is_err(), "Order should be blocked");
     println!("   ✓ Connectivity trigger: Order blocked");
 
@@ -263,16 +272,18 @@ async fn test_mexc_comprehensive_kill_switch_report() {
     println!("\n1️⃣  Configuration");
     println!("{}", "-".repeat(60));
     println!("   Exchange: MEXC Spot");
-    println!("   Symbol: BTCUSDT");
+    println!("   Symbol: ETHUSDC");
     println!("   Kill switch: Initialized");
     println!("   Initial status: {:?}", kill_switch.is_triggered());
 
     println!("\n2️⃣  Pre-Flight Checks");
     println!("{}", "-".repeat(60));
 
-    let ticker = adapter.get_ticker_info("BTCUSDT").await
+    let ticker = adapter.get_ticker("ETHUSDC").await
         .expect("Failed to get ticker");
     let test_price = ticker.last_price * 0.01;
+    let min_notional = 1.0;
+    let test_qty = (min_notional / test_price) * 1.1;
 
     println!("   ✓ Connection to MEXC: OK");
     println!("   ✓ Market data access: OK");
@@ -284,7 +295,7 @@ async fn test_mexc_comprehensive_kill_switch_report() {
     let mut order_ids = Vec::new();
 
     for i in 1..=3 {
-        let result = submit_order_with_kill_switch(&adapter, &kill_switch, "BTCUSDT", test_price, i).await;
+        let result = submit_order_with_kill_switch(&adapter, &kill_switch, "ETHUSDC", test_price, i, test_qty).await;
         match result {
             Ok(order_id) => {
                 println!("   ✅ Order {}: Submitted (ID: {})", i, order_id);
@@ -321,7 +332,7 @@ async fn test_mexc_comprehensive_kill_switch_report() {
 
     let mut blocked_count = 0;
     for i in 4..=8 {
-        let result = submit_order_with_kill_switch(&adapter, &kill_switch, "BTCUSDT", test_price, i).await;
+        let result = submit_order_with_kill_switch(&adapter, &kill_switch, "ETHUSDC", test_price, i, test_qty).await;
         match result {
             Ok(order_id) => {
                 println!("   ⚠️  Order {}: ACCEPTED (should be blocked!) ID: {}", i, order_id);
@@ -354,7 +365,7 @@ async fn test_mexc_comprehensive_kill_switch_report() {
     println!("{}", "-".repeat(60));
 
     for i in 9..=11 {
-        let result = submit_order_with_kill_switch(&adapter, &kill_switch, "BTCUSDT", test_price, i).await;
+        let result = submit_order_with_kill_switch(&adapter, &kill_switch, "ETHUSDC", test_price, i, test_qty).await;
         match result {
             Ok(order_id) => {
                 println!("   ✅ Order {}: Submitted (ID: {})", i, order_id);
@@ -372,7 +383,7 @@ async fn test_mexc_comprehensive_kill_switch_report() {
     print!("   Cancelling all test orders: ");
 
     for order_id in &order_ids {
-        let _ = adapter.cancel_order("BTCUSDT", order_id).await;
+        let _ = adapter.cancel_order("ETHUSDC", order_id).await;
     }
     println!("✓ Done ({} orders)", order_ids.len());
 

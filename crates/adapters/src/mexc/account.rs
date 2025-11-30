@@ -444,14 +444,12 @@ impl MexcRestClient {
 
         // Generate signature
         let signature = auth.sign(&query_string);
-        params.insert("signature".to_string(), signature);
 
-        let url = format!("{}{}", self.base_url, endpoint);
+        // Build URL with query string manually
+        let url = format!("{}{}?{}&signature={}", self.base_url, endpoint, query_string, signature);
         let response = self.client
             .post(&url)
             .header("X-MEXC-APIKEY", &auth.api_key)
-            .header("Content-Type", "application/x-www-form-urlencoded")
-            .form(&params)
             .send()
             .await
             .context("Failed to send request")?;
