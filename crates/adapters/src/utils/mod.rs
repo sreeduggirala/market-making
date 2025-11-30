@@ -10,8 +10,10 @@ pub mod reconnect;
 pub mod rate_limiter;
 pub mod circuit_breaker;
 pub mod heartbeat;
+pub mod ws_manager;
 
 pub use reconnect::{ReconnectConfig, ReconnectStrategy};
 pub use rate_limiter::{RateLimiter, RateLimiterConfig};
 pub use circuit_breaker::{CircuitBreaker, CircuitBreakerConfig, CircuitState};
 pub use heartbeat::{HeartbeatMonitor, HeartbeatConfig};
+pub use ws_manager::{WsManager, WsManagerConfig, ConnectionState, ConnectionStats};
