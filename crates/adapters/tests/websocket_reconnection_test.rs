@@ -6,7 +6,7 @@
 //! Run with: cargo test --package adapters --test websocket_reconnection_test -- --nocapture
 
 use adapters::utils::{WsManager, WsManagerConfig, ConnectionState, HeartbeatConfig, ReconnectConfig};
-use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
@@ -47,7 +47,7 @@ async fn simulate_always_failing_connection() -> Result<(), String> {
 #[tokio::test]
 async fn test_ws_connection_lifecycle() {
     println!("\n📊 TEST: WebSocket Connection Lifecycle");
-    println!("=" .repeat(60));
+    println!("{}", "=".repeat(60));
 
     let manager = WsManager::new();
 
@@ -88,7 +88,7 @@ async fn test_ws_connection_lifecycle() {
 #[tokio::test]
 async fn test_ws_heartbeat_monitoring() {
     println!("\n💓 TEST: WebSocket Heartbeat Monitoring");
-    println!("=".repeat(60));
+    println!("{}", "=".repeat(60));
 
     let config = WsManagerConfig {
         heartbeat: HeartbeatConfig {
@@ -131,7 +131,7 @@ async fn test_ws_heartbeat_monitoring() {
 #[tokio::test]
 async fn test_ws_ping_pong_latency() {
     println!("\n⏱️  TEST: WebSocket Ping/Pong Latency Tracking");
-    println!("=".repeat(60));
+    println!("{}", "=".repeat(60));
 
     let manager = WsManager::new();
     manager.mark_connected().await;
@@ -169,7 +169,7 @@ async fn test_ws_ping_pong_latency() {
 #[tokio::test]
 async fn test_ws_fast_reconnection() {
     println!("\n🚀 TEST: Fast WebSocket Reconnection (< 5 seconds)");
-    println!("=".repeat(60));
+    println!("{}", "=".repeat(60));
 
     let config = WsManagerConfig {
         reconnect: ReconnectConfig {
@@ -234,7 +234,7 @@ async fn test_ws_fast_reconnection() {
 #[tokio::test]
 async fn test_ws_multiple_reconnection_attempts() {
     println!("\n🔁 TEST: Multiple Reconnection Attempts");
-    println!("=".repeat(60));
+    println!("{}", "=".repeat(60));
 
     let config = WsManagerConfig {
         reconnect: ReconnectConfig {
@@ -286,7 +286,7 @@ async fn test_ws_multiple_reconnection_attempts() {
 #[tokio::test]
 async fn test_ws_reconnection_timeout() {
     println!("\n⏰ TEST: Reconnection Timeout (Exceeds 5 second limit)");
-    println!("=".repeat(60));
+    println!("{}", "=".repeat(60));
 
     let config = WsManagerConfig {
         reconnect: ReconnectConfig {
@@ -335,7 +335,7 @@ async fn test_ws_reconnection_timeout() {
 #[tokio::test]
 async fn test_ws_staleness_detection() {
     println!("\n🕐 TEST: Connection Staleness Detection");
-    println!("=".repeat(60));
+    println!("{}", "=".repeat(60));
 
     let config = WsManagerConfig {
         heartbeat: HeartbeatConfig {
@@ -380,7 +380,7 @@ async fn test_ws_staleness_detection() {
 #[tokio::test]
 async fn test_ws_rapid_reconnection_stress() {
     println!("\n⚡ TEST: Rapid Reconnection Stress Test");
-    println!("=".repeat(60));
+    println!("{}", "=".repeat(60));
 
     let config = WsManagerConfig {
         reconnect: ReconnectConfig {
@@ -433,7 +433,7 @@ async fn test_ws_rapid_reconnection_stress() {
 #[tokio::test]
 async fn test_ws_comprehensive_reconnection_report() {
     println!("\n📋 TEST: Comprehensive WebSocket Reconnection Report");
-    println!("=".repeat(60));
+    println!("{}", "=".repeat(60));
 
     let config = WsManagerConfig {
         reconnect: ReconnectConfig {
@@ -454,21 +454,21 @@ async fn test_ws_comprehensive_reconnection_report() {
     let manager = WsManager::with_config(config);
 
     println!("\n1️⃣  Initial Connection");
-    println!("-".repeat(60));
+    println!("{}", "-".repeat(60));
     manager.mark_connected().await;
     let stats = manager.get_stats().await;
     println!("   State: {:?}", stats.state);
     println!("   Is Alive: {}", stats.is_alive);
 
     println!("\n2️⃣  Simulating Connection Loss");
-    println!("-".repeat(60));
+    println!("{}", "-".repeat(60));
     manager.mark_disconnected("network failure").await;
     let stats = manager.get_stats().await;
     println!("   State: {:?}", stats.state);
     println!("   Total Disconnections: {}", stats.total_disconnections);
 
     println!("\n3️⃣  Attempting Reconnection");
-    println!("-".repeat(60));
+    println!("{}", "-".repeat(60));
 
     let detection_start = Instant::now();
     let attempts = Arc::new(AtomicU64::new(0));
@@ -491,7 +491,7 @@ async fn test_ws_comprehensive_reconnection_report() {
     println!("   Attempts Made: {}", attempts.load(Ordering::SeqCst));
 
     println!("\n4️⃣  Verification Against Requirements");
-    println!("-".repeat(60));
+    println!("{}", "-".repeat(60));
 
     // Requirement: Reconnection within < 5 seconds
     assert!(reconnection_time < Duration::from_secs(5));
@@ -508,7 +508,7 @@ async fn test_ws_comprehensive_reconnection_report() {
     println!("   ✅ Heartbeat Status: Alive");
 
     println!("\n5️⃣  Final Statistics Summary");
-    println!("-".repeat(60));
+    println!("{}", "-".repeat(60));
     println!("   Total Connections: {}", stats.total_connections);
     println!("   Total Disconnections: {}", stats.total_disconnections);
     println!("   Successful Reconnects: {}", stats.successful_reconnects);
@@ -516,11 +516,11 @@ async fn test_ws_comprehensive_reconnection_report() {
     println!("   Current State: {:?}", stats.state);
     println!("   Last Reconnect Duration: {:?}", stats.last_reconnect_duration.unwrap());
 
-    println!("\n" + "=".repeat(60));
+    println!("\n{}", "=".repeat(60));
     println!("✅ COMPREHENSIVE TEST PASSED");
     println!("   WebSocket reconnection system meets all requirements:");
     println!("   • Detection: Immediate via heartbeat timeout");
     println!("   • Reconnection: < 5 seconds (actual: {:?})", reconnection_time);
     println!("   • Reliability: Automatic retry with backoff");
-    println!("=".repeat(60) + "\n");
+    println!("{}\n", "=".repeat(60));
 }
