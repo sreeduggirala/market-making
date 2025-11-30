@@ -37,6 +37,7 @@ pub mod kill_switch;
 pub mod rate_limit;
 pub mod margin;
 pub mod monitoring;
+pub mod latency_tracker;
 
 pub use types::*;
 pub use limits::*;
@@ -46,6 +47,7 @@ pub use kill_switch::*;
 pub use rate_limit::*;
 pub use margin::*;
 pub use monitoring::*;
+pub use latency_tracker::*;
 
 use std::sync::Arc;
 use inventory::PositionManager;

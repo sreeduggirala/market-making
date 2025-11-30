@@ -1,0 +1,37 @@
+Commands to Run Risk Reduction Tests
+
+  Individual Test Suites
+
+  1. P99 Latency Test
+  cargo test --package risk --test p99_latency_test -- --nocapture
+
+  2. Kill Switch Test
+  cargo test --package risk --test kill_switch_test -- --nocapture
+
+  3. WebSocket Reconnection Test
+  cargo test --package adapters --test websocket_reconnection_test -- --nocapture
+
+  Run All Three Test Suites Together
+
+  cargo test --package risk --test p99_latency_test -- --nocapture && \
+  cargo test --package risk --test kill_switch_test -- --nocapture && \
+  cargo test --package adapters --test websocket_reconnection_test -- --nocapture
+
+  Quick Summary View (Test Results Only)
+
+  echo "=== P99 Latency Tests ===" && \
+  cargo test --package risk --test p99_latency_test 2>&1 | grep "test result" && \
+  echo "" && echo "=== Kill Switch Tests ===" && \
+  cargo test --package risk --test kill_switch_test 2>&1 | grep "test result" && \
+  echo "" && echo "=== WebSocket Reconnection Tests ===" && \
+  cargo test --package adapters --test websocket_reconnection_test 2>&1 | grep "test result"
+
+  Additional MEXC-Specific Tests
+
+  If you also want to run the MEXC-specific versions:
+
+  cargo test --package adapters --test mexc_p99_latency_test -- --nocapture
+  cargo test --package adapters --test mexc_kill_switch_test -- --nocapture
+  cargo test --package adapters --test mexc_websocket_reconnection_test -- --nocapture
+
+  Note: The --nocapture flag shows all the detailed test output with emojis and progress indicators.
